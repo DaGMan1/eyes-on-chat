@@ -79,7 +79,10 @@ async def get_tab_ws_url(tab_id):
 
 
 async def cdp_send_ws(ws_url, method, params=None):
-    async with websockets.connect(ws_url) as ws:
+    # max_size=None: default 1MiB frame limit is too small for a full-page
+    # screenshot of most real sites -- confirmed live against Telegram Web,
+    # which errored with "message too big" on the default.
+    async with websockets.connect(ws_url, max_size=None) as ws:
         cid = 1
         await ws.send(json.dumps({"id": cid, "method": method, "params": params or {}}))
         async for msg in ws:
@@ -135,7 +138,7 @@ async def click_tab(req: ClickReq):
     ws_url = await get_tab_ws_url(req.tab_id)
     if not ws_url:
         raise HTTPException(status_code=404, detail="No tabs available")
-    async with websockets.connect(ws_url) as ws:
+    async with websockets.connect(ws_url, max_size=None) as ws:
         for cid, evt in [(1, "mousePressed"), (2, "mouseReleased")]:
             await ws.send(json.dumps({
                 "id": cid, "method": "Input.dispatchMouseEvent",
@@ -164,7 +167,7 @@ async def type_text(req: TypeReq):
     ws_url = await get_tab_ws_url(req.tab_id)
     if not ws_url:
         raise HTTPException(status_code=404, detail="No tabs available")
-    async with websockets.connect(ws_url) as ws:
+    async with websockets.connect(ws_url, max_size=None) as ws:
         for i, ch in enumerate(req.text):
             cid1 = i + 1
             await ws.send(json.dumps({
@@ -195,7 +198,7 @@ async def press_key(req: TypeReq):
         raise HTTPException(status_code=404, detail="No tabs available")
     key_name = req.text
     vk = 13 if key_name == "Enter" else (9 if key_name == "Tab" else 0)
-    async with websockets.connect(ws_url) as ws:
+    async with websockets.connect(ws_url, max_size=None) as ws:
         for cid, evt in [(1, "rawKeyDown"), (2, "keyUp")]:
             await ws.send(json.dumps({
                 "id": cid, "method": "Input.dispatchKeyEvent",

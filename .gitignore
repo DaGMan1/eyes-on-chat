@@ -1,0 +1,20 @@
+# Secrets -- never commit these
+vapid_private.pem
+.env
+*.pem
+*.key
+
+# Runtime data
+chat.db
+chat.db-wal
+chat.db-shm
+*.log
+
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS
+.DS_Store

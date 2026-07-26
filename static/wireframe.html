@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>LeLinc — Product UX Wireframe</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0b0b0f;
+  --surface: #14141a;
+  --surface2: #1c1c26;
+  --border: #2a2a36;
+  --text: #e8e8ee;
+  --text2: #8888a0;
+  --accent: #6c5ce7;
+  --accent-glow: rgba(108, 92, 231, 0.3);
+  --success: #00e676;
+  --warning: #ffc107;
+  --danger: #ff5252;
+  --radius: 12px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 24px;
+}
+
+h1 { font-size: 1.4rem; margin-bottom: 20px; }
+h2 { font-size: 1rem; margin: 24px 0 12px; color: var(--accent); }
+h3 { font-size: 0.85rem; margin: 16px 0 8px; color: var(--text2); }
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.step-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+.step-group::before {
+  content: '';
+  position: absolute;
+  left: 19px;
+  top: 32px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.step {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  position: relative;
+}
+
+.step-number {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.step.completed .step-number { background: var(--success); }
+.step.future .step-number { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+
+.step-content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  flex: 1;
+  margin-top: 4px;
+}
+
+.step-content h3 { margin: 0 0 8px; color: var(--text); font-size: 0.9rem; }
+.step-content p { font-size: 0.78rem; color: var(--text2); line-height: 1.5; margin-bottom: 8px; }
+
+.mockup {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+.mockup .phone-frame {
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+.mockup .chat-msg {
+  padding: 8px 12px;
+  border-radius: 10px;
+  margin: 4px 0;
+  max-width: 80%;
+  font-size: 0.7rem;
+}
+
+.mockup .chat-msg.incoming { background: var(--incoming, #1c1c26); border: 1px solid var(--border); align-self: flex-start; }
+.mockup .chat-msg.outgoing { background: var(--accent); color: white; align-self: flex-end; margin-left: auto; }
+.mockup .chat-msg.system { text-align: center; color: var(--text2); font-size: 0.65rem; max-width: 100%; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.badge.ready { background: rgba(0, 230, 118, 0.15); color: var(--success); }
+.badge.build { background: rgba(108, 92, 231, 0.15); color: var(--accent); }
+.badge.next { background: rgba(255, 193, 7, 0.15); color: var(--warning); }
+
+.platform-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+.platform-tag {
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  font-size: 0.65rem;
+}
+
+.qr-placeholder {
+  width: 120px; height: 120px;
+  background: var(--bg);
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  margin: 8px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  color: var(--text2);
+}
+
+.arrow-down {
+  text-align: center;
+  color: var(--text2);
+  font-size: 1.2rem;
+  margin: 4px 0;
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.tag.done { background: rgba(0, 230, 118, 0.2); color: var(--success); }
+.tag.wip { background: rgba(108, 92, 231, 0.2); color: var(--accent); }
+.tag.next { background: rgba(255, 193, 7, 0.2); color: var(--warning); }
+</style>
+</head>
+<body>
+
+<h1>LeLinc + Chat — Complete User Flow</h1>
+<p style="color:var(--text2);font-size:0.8rem;margin-bottom:24px;">How a client goes from "never heard of us" to "chatting with their AI agent"</p>
+
+<div class="flow">
+
+  <!-- STEP 1 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <h3>Landing / Onboarding <span class="tag done">BUILT</span></h3>
+        <p>Client reaches LeLinc landing page (lelinc.keyview.com.au). Sees one question: "What do you need help with?"</p>
+        <div class="platform-row">
+          <span class="platform-tag">🌐 Website help</span>
+          <span class="platform-tag">💼 Business restructure</span>
+          <span class="platform-tag">📱 Social media</span>
+        </div>
+        <p>They pick. Fill in name, email, business name. That's it.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-down">↓</div>
+
+  <!-- STEP 2 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <h3>QR Code Generated <span class="tag done">BUILT</span></h3>
+        <p>LeLinc creates a chat session. Returns a QR code screen with options:</p>
+        <div class="mockup">
+          <div style="text-align:center;">
+            <div style="font-size:0.85rem;font-weight:600;margin-bottom:4px;">Your agent is ready!</div>
+            <div class="qr-placeholder">QR CODE</div>
+            <div style="font-size:0.65rem;color:var(--text2);margin-bottom:8px;">Scan to start chatting with CoSidekick</div>
+            <div class="platform-row" style="justify-content:center;">
+              <span class="platform-tag">💬 Web Chat</span>
+              <span class="platform-tag">📱 WhatsApp</span>
+              <span class="platform-tag">✈️ Telegram</span>
+            </div>
+          </div>
+        </div>
+        <p style="margin-top:8px;">No app install needed for Web Chat — opens in their phone browser.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-down">↓</div>
+
+  <!-- STEP 3 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <h3>Chat Opens <span class="tag wip">BUILDING</span></h3>
+        <p>Client scans QR → chat opens. They see a welcome message from CoSidekick. They type their first message.</p>
+        <div class="mockup">
+          <div class="phone-frame">
+            <div style="font-size:0.65rem;font-weight:600;margin-bottom:6px;color:var(--accent);">CoSidekick</div>
+            <div class="chat-msg system">Connected — how can I help?</div>
+            <div class="chat-msg incoming">👋 Hey! I run a beauty salon. My website is too slow and I'm paying too much for hosting. Can you help?</div>
+            <div class="chat-msg outgoing" style="margin-top:6px;">Absolutely! I can audit your current setup. What's your domain?</div>
+            <div style="font-size:0.6rem;color:var(--text2);margin-top:6px;text-align:center;">Type a message...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-down">↓</div>
+
+  <!-- STEP 4 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <h3>Agent Handoff (if needed) <span class="tag wip">BUILDING</span></h3>
+        <p>CoSidekick determines the client needs something outside its scope. Hands off via Kanban.</p>
+        <div class="mockup">
+          <div class="phone-frame">
+            <div style="font-size:0.65rem;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between;">
+              <span style="color:var(--accent);">CoSidekick</span>
+              <span style="color:var(--text2);font-weight:400;" id="handoffDemo" onclick="cycleHandoff()">➡</span>
+            </div>
+            <div class="chat-msg incoming">Actually, I need help with my taxes too. Can you do that?</div>
+            <div class="chat-msg system" id="handoffMsg">CoSidekick → handing over to CFO Agent for billing questions</div>
+            <div class="chat-msg incoming">Hi! I've been handed your case from CoSidekick. Let me look at your billing.</div>
+            <div style="font-size:0.6rem;color:var(--text2);margin-top:6px;text-align:center;opacity:0.5;font-style:italic;">Agent changed from CoSidekick to CFO</div>
+          </div>
+        </div>
+        <p style="font-size:0.7rem;color:var(--accent);margin-top:4px;">Tap ➡ to cycle through agent handoff scenarios</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-down">↓</div>
+
+  <!-- STEP 5 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <h3>Cloak Browser Executes <span class="tag next">NEXT</span></h3>
+        <p>Behind the scenes, CoSidekick or the assigned agent opens Cloak Browser tabs to do the work — migrate hosting, post to Instagram, scan LinkedIn, check bank statements. Client just sees replies coming through the chat.</p>
+        <div class="mockup">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <span class="platform-tag" style="background:rgba(37,211,102,0.1);border-color:rgba(37,211,102,0.3);">WhatsApp Web ✓</span>
+            <span class="platform-tag" style="background:rgba(0,136,204,0.1);border-color:rgba(0,136,204,0.3);">Telegram Web ✓</span>
+            <span class="platform-tag" style="background:rgba(228,64,95,0.1);border-color:rgba(228,64,95,0.3);">Instagram DM ✓</span>
+            <span class="platform-tag" style="background:rgba(10,102,194,0.1);border-color:rgba(10,102,194,0.3);">LinkedIn ✓</span>
+          </div>
+          <div style="font-size:0.65rem;color:var(--text2);margin-top:6px;text-align:center;">
+            Cloak Browser (Docker) — 6 persistent tabs
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-down">↓</div>
+
+  <!-- STEP 6 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">6</div>
+      <div class="step-content">
+        <h3>LeLinc Dashboard <span class="tag done">BUILT</span></h3>
+        <p>Client (and you) can see all connected platforms, active chats, and recent activity in the LeLinc dashboard at l elinc.keyview.com.au/dashboard.html?email=...</p>
+        <div class="mockup">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center;">
+            <div><div style="font-size:1.1rem;font-weight:700;color:var(--success);">3</div><div style="font-size:0.6rem;color:var(--text2);">Connected</div></div>
+            <div><div style="font-size:1.1rem;font-weight:700;color:var(--accent);">12</div><div style="font-size:0.6rem;color:var(--text2);">Found</div></div>
+            <div><div style="font-size:1.1rem;font-weight:700;color:var(--success);">🟢</div><div style="font-size:0.6rem;color:var(--text2);">Chat Active</div></div>
+          </div>
+          <div style="font-size:0.65rem;color:var(--text2);margin-top:6px;">Session: cosmetologyco.au</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-down">↓</div>
+
+  <!-- STEP 7 -->
+  <div class="step-group">
+    <div class="step">
+      <div class="step-number">7</div>
+      <div class="step-content">
+        <h3>Q's Overview <span class="tag wip">BUILDING</span></h3>
+        <p>I see every active conversation across all products. Who's chatting, which agent is handling it, last message, unread count. I route, escalate, or jump in as needed.</p>
+        <div class="mockup">
+          <table style="width:100%;font-size:0.65rem;border-collapse:collapse;">
+            <tr style="color:var(--text2);border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:4px;">Client</th>
+              <th style="text-align:left;padding:4px;">Agent</th>
+              <th style="text-align:right;padding:4px;">Unread</th>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:4px;">cosmetologyco.au</td>
+              <td style="padding:4px;color:var(--accent);">CoSidekick</td>
+              <td style="padding:4px;text-align:right;color:var(--warning);">2</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:4px;">Richo Diesel</td>
+              <td style="padding:4px;color:var(--success);">PR/Sales</td>
+              <td style="padding:4px;text-align:right;">0</td>
+            </tr>
+            <tr>
+              <td style="padding:4px;">Smith & Co</td>
+              <td style="padding:4px;color:var(--danger);">CFO</td>
+              <td style="padding:4px;text-align:right;color:var(--warning);">1</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<br><hr style="border-color:var(--border);margin:24px 0;">
+
+<h2>Product Coverage — Same Chat, Different Agent</h2>
+
+<table style="width:100%;font-size:0.78rem;border-collapse:collapse;max-width:800px;">
+  <tr style="border-bottom:1px solid var(--border);color:var(--text2);">
+    <th style="text-align:left;padding:6px;">Product</th>
+    <th style="text-align:left;padding:6px;">Client</th>
+    <th style="text-align:left;padding:6px;">Primary Agent</th>
+    <th style="text-align:left;padding:6px;">Handoff To</th>
+    <th style="text-align:left;padding:6px;">Platform</th>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px;">Key View Digital</td>
+    <td style="padding:6px;">Small business owner</td>
+    <td style="padding:6px;color:var(--accent);">CoSidekick</td>
+    <td style="padding:6px;">CFO (billing)</td>
+    <td style="padding:6px;">WhatsApp / Web Chat</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px;">Key View Consulting</td>
+    <td style="padding:6px;">Distressed company</td>
+    <td style="padding:6px;color:var(--accent);">Q (or Consultant agent)</td>
+    <td style="padding:6px;">Garry (escalation)</td>
+    <td style="padding:6px;">Telegram / Web Chat</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px;">Social Places</td>
+    <td style="padding:6px;">Multi-location owner</td>
+    <td style="padding:6px;color:var(--accent);">PR/Sales</td>
+    <td style="padding:6px;">CoSidekick (content)</td>
+    <td style="padding:6px;">Web Chat</td>
+  </tr>
+  <tr>
+    <td style="padding:6px;">LeLinc (standalone)</td>
+    <td style="padding:6px;">Unified inbox user</td>
+    <td style="padding:6px;color:var(--accent);">CoSidekick</td>
+    <td style="padding:6px;">Any (via kanban)</td>
+    <td style="padding:6px;">All platforms</td>
+  </tr>
+</table>
+
+<script>
+let handoffIndex = 0;
+const handoffs = [
+  { msg: 'CoSidekick → handing over to CFO Agent for billing questions', agent: 'CFO' },
+  { msg: 'CoSidekick → handing over to PR/Sales Agent for marketing outreach', agent: 'PR/Sales' },
+  { msg: 'CoSidekick → handing over to Q for strategic review', agent: 'Q' }
+];
+
+function cycleHandoff() {
+  handoffIndex = (handoffIndex + 1) % handoffs.length;
+  const h = handoffs[handoffIndex];
+  document.getElementById('handoffMsg').textContent = h.msg;
+  // Update the agent name in the mockup
+  const agentSpans = document.querySelectorAll('[id^="handoffDemo"]');
+}
+</script>
+</body>
+</html>

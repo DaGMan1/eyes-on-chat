@@ -191,6 +191,21 @@ def add_message(session_id, platform, sender, sender_name, content,
     return dict(row) if row else None
 
 
+def get_last_client_platform(session_id):
+    """Platform of the most recent inbound message from a real external
+    platform (not 'agent' or 'webchat'). Used to route an agent's reply back
+    to whichever platform the conversation is currently happening on."""
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT platform FROM messages
+           WHERE session_id=? AND sender != 'agent' AND platform NOT IN ('agent', 'webchat')
+           ORDER BY created_at DESC LIMIT 1""",
+        (session_id,)
+    ).fetchone()
+    conn.close()
+    return row["platform"] if row else None
+
+
 def get_messages(session_id, limit=50, offset=0):
     """Get message history for a session."""
     conn = get_conn()

@@ -170,6 +170,11 @@ class AgentReplyRequest(BaseModel):
     content: str
     agent_name: str = "cosidekick"
     message_type: str = "text"
+    # Explicit platform to relay this reply out to (e.g. "telegram"). If
+    # omitted, relay falls back to whichever platform last sent an inbound
+    # message on this session -- the "reply in-context" default for a
+    # unified inbox.
+    platform: str = ""
 
 class AgentTypingRequest(BaseModel):
     session_id: str
@@ -403,7 +408,21 @@ async def agent_reply(req: AgentReplyRequest):
 
     send_push(req.session_id, req.agent_name, req.content)
 
-    return {"message": msg}
+    # Relay out to the real platform (Telegram, WhatsApp, ...) so this is a
+    # genuine two-way unified inbox, not just a one-way ingest into eyes-on-chat.
+    relay_platform = req.platform or db.get_last_client_platform(req.session_id)
+    relayed = False
+    if relay_platform and platform_watcher is not None:
+        relayed = await platform_watcher.send_to_platform(
+            req.session_id, relay_platform, req.content
+        )
+        if not relayed:
+            logger.warning(
+                "Reply not relayed to %s for session %s (no watched tab or send failed)",
+                relay_platform, req.session_id
+            )
+
+    return {"message": msg, "relayed_to": relay_platform if relayed else None}
 
 
 @app.post("/api/chat/agent/typing")
@@ -822,6 +841,18 @@ async def startup():
     global platform_watcher
     from cdp_integration import create_watcher
     platform_watcher = create_watcher()
+
+    # Tab registrations live only in memory (self._tabs), so a service
+    # restart otherwise silently drops every connected platform even though
+    # the DB (and /platforms/status) still shows it as connected. Rehydrate
+    # from platform_connections on boot.
+    for conn in db.list_connections():
+        if conn.get("tab_id"):
+            await platform_watcher.register_tab_by_id(
+                conn["session_id"], conn["platform"], conn["tab_id"]
+            )
+            logger.info("Rehydrated %s tab for session %s", conn["platform"], conn["session_id"])
+
     asyncio.create_task(platform_watcher.poll_loop())
     logger.info("Platform watcher started (Cloak Browser CDP)")
 

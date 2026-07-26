@@ -36,11 +36,13 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 import database as db
+from viewer_api import router as viewer_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chat")
 
 app = FastAPI(title="CoSidekick Unified Chat", version="1.0.0")
+app.include_router(viewer_router)
 
 # ============================================================
 # WEB PUSH (VAPID)
@@ -121,6 +123,12 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Watches connected platform tabs (WhatsApp Web, Telegram Web, etc.) via
+# Cloak Browser CDP and forwards new messages into this server. Created at
+# startup (needs an event loop); stays None until then, so anything using it
+# must check for that (see /api/platforms/connect).
+platform_watcher = None
+
 
 # ============================================================
 # API MODELS
@@ -147,6 +155,15 @@ class CDPIngestRequest(BaseModel):
     sender: str = "client"
     sender_name: str = ""
     platform_message_id: str = ""
+
+class PlatformConnectRequest(BaseModel):
+    platform: str
+    tab_id: str = ""
+    # No session picker in the UI yet -- there's only one real session (ROOT's)
+    # right now, so new platform connections default to it. Revisit once
+    # there's an actual multi-session routing model for incoming platform
+    # messages (which agent/session should WhatsApp messages go to?).
+    session_id: str = "b4d94cbd-ed57-4f3f-a374-77730a74b166"
 
 class AgentReplyRequest(BaseModel):
     session_id: str
@@ -314,6 +331,24 @@ async def cdp_ingest(req: CDPIngestRequest):
     })
 
     return {"message": msg}
+
+
+@app.post("/api/platforms/connect")
+async def connect_platform(req: PlatformConnectRequest):
+    """Register a Cloak Browser tab as a connected platform, and start
+    watching it for new messages (forwarded to /api/chat/cdp/ingest)."""
+    session = db.get_session(req.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if not req.tab_id:
+        raise HTTPException(400, "No browser tab open to connect -- navigate to the platform first")
+
+    db.add_connection(req.session_id, req.platform, req.tab_id)
+
+    if platform_watcher is not None:
+        await platform_watcher.register_tab_by_id(req.session_id, req.platform, req.tab_id)
+
+    return {"status": "connected", "platform": req.platform, "tab_id": req.tab_id}
 
 
 @app.get("/api/chat/agent/next")
@@ -610,6 +645,19 @@ async def health():
     return {"status": "ok", "service": "cosidekick-chat"}
 
 
+@app.get("/platforms", response_class=HTMLResponse)
+async def platforms_page():
+    """Garry's own admin page: live view of eyes-on-chat's isolated Cloak
+    Browser tab, pick a platform, log in, mark it connected. Not a CoSidekick
+    end-user page -- put behind the same auth as the rest of the admin
+    surface (hub.keyview.com.au's Basic Auth), not exposed on its own."""
+    path = os.path.join(os.path.dirname(__file__), "static", "platforms.html")
+    if not os.path.exists(path):
+        return HTMLResponse("<h1>Not built yet</h1>", status_code=501)
+    with open(path) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/sw.js")
 async def service_worker():
     """Served at the root path (not /static/sw.js) so its default scope covers
@@ -751,6 +799,12 @@ def _call_llm(messages):
 async def startup():
     db.init_db()
     logger.info("Chat database initialized")
+
+    global platform_watcher
+    from cdp_integration import create_watcher
+    platform_watcher = create_watcher()
+    asyncio.create_task(platform_watcher.poll_loop())
+    logger.info("Platform watcher started (Cloak Browser CDP)")
 
 
 # ============================================================

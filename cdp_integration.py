@@ -5,7 +5,7 @@ Reads messages from Cloak Browser tabs (WhatsApp Web, Telegram Web, etc.)
 and types replies back using Chrome DevTools Protocol.
 
 Requires: Cloak Browser running with CDP port exposed. The `lelinc-browser`
-container maps CDP to 127.0.0.1:19222 (NOT 9222 -- 9222 resets the
+container maps CDP to 127.0.0.1:19223 (NOT 9222 -- 9222 resets the
 connection; confirmed directly against the running container, not assumed).
 """
 import asyncio
@@ -36,7 +36,7 @@ class CloakCDP:
     never actually exercised against a live browser).
     """
 
-    def __init__(self, cdp_url: str = "http://127.0.0.1:19222"):
+    def __init__(self, cdp_url: str = "http://127.0.0.1:19223"):
         self.cdp_url = cdp_url
         self.ws_host = cdp_url.replace("http://", "ws://").replace("https://", "wss://")
         self.http = httpx.AsyncClient(timeout=15.0)
@@ -288,21 +288,28 @@ class PlatformWatcher:
         self._tabs = {}  # {session_id: {platform: {target_id, last_count}}}
     
     async def register_tab(self, session_id: str, platform: str, url_pattern: str):
-        """Register a platform tab to watch for a session."""
+        """Register a platform tab to watch for a session, found by URL pattern."""
         tab = await self.cdp.find_or_create_tab(url_pattern)
         if not tab:
             logger.warning(f"No tab found for {platform} ({url_pattern})")
             return False
-        
-        target_id = tab["id"]
+        return self._register(session_id, platform, tab["id"])
+
+    async def register_tab_by_id(self, session_id: str, platform: str, target_id: str) -> bool:
+        """Register a platform tab to watch, when the caller already knows the
+        exact CDP target ID (e.g. the web UI picked it via /api/viewer/tabs) --
+        skips the URL-pattern lookup register_tab() does."""
+        return self._register(session_id, platform, target_id)
+
+    def _register(self, session_id: str, platform: str, target_id: str) -> bool:
         if session_id not in self._tabs:
             self._tabs[session_id] = {}
-        
+
         self._tabs[session_id][platform] = {
             "target_id": target_id,
             "last_count": 0
         }
-        
+
         logger.info(f"Watching {platform} for session {session_id} (tab: {target_id})")
         return True
     
@@ -359,7 +366,7 @@ class PlatformWatcher:
 # FACTORY
 # ============================================================
 
-def create_watcher(cdp_url: str = "http://127.0.0.1:19222",
+def create_watcher(cdp_url: str = "http://127.0.0.1:19223",
                    chat_api_url: str = "http://127.0.0.1:8250") -> PlatformWatcher:
     """Create a PlatformWatcher with a CloakCDP client."""
     cdp = CloakCDP(cdp_url)

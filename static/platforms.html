@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>eyes-on-chat — Connect a platform</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0b0b0f;--surf:#14141a;--border:#2a2a36;
+  --txt:#e8e8ee;--dim:#8888a0;
+  --accent:#6c5ce7;--accent2:#a78bfa;
+  --green:#00e676;--red:#f87171;
+}
+html,body{height:100%;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden;display:flex;flex-direction:column}
+
+#toolbar{
+  display:flex;align-items:center;gap:6px;
+  padding:5px 10px;background:var(--surf);
+  border-bottom:1px solid var(--border);flex-shrink:0;
+  min-height:40px;
+}
+.navbtn{
+  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  background:none;border:1px solid var(--border);border-radius:6px;
+  color:var(--dim);cursor:pointer;font-size:14px;flex-shrink:0;
+}
+.navbtn:hover{background:var(--border);color:var(--txt)}
+#urlBar{
+  flex:1;padding:5px 10px;background:var(--bg);
+  border:1px solid var(--border);border-radius:6px;
+  color:var(--txt);font-size:.8rem;outline:none;min-width:0;
+}
+#urlBar:focus{border-color:var(--accent)}
+#connDot{width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;transition:background .3s}
+#connDot.on{background:var(--green);box-shadow:0 0 5px rgba(0,230,118,.5)}
+
+#platforms{
+  display:flex;align-items:center;gap:4px;
+  padding:6px 10px;background:var(--bg);
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;overflow-x:auto;scrollbar-width:none;
+}
+#platforms::-webkit-scrollbar{display:none}
+.pp{
+  padding:4px 12px;background:var(--surf);
+  border:1px solid var(--border);border-radius:20px;
+  color:var(--dim);font-size:.72rem;cursor:pointer;
+  white-space:nowrap;font-weight:500;flex-shrink:0;
+}
+.pp:hover{background:rgba(108,92,231,.15);border-color:var(--accent);color:var(--accent2)}
+.pp.status-connected{border-color:var(--green);color:var(--green)}
+
+#screen{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  background:#000;overflow:hidden;position:relative;
+}
+#cvs{max-width:100%;max-height:100%;display:block;cursor:crosshair;outline:none}
+#cvs:focus{cursor:text}
+
+#overlay{
+  position:absolute;inset:0;background:rgba(11,11,15,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;z-index:10;
+}
+#overlay.gone{display:none}
+.spin{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#overlayMsg{font-size:.82rem;color:var(--dim)}
+#retryBtn{display:none;padding:7px 20px;background:var(--accent);border:none;border-radius:7px;color:#fff;font-size:.78rem;cursor:pointer;font-weight:600}
+#retryBtn:hover{background:#5a4bd1}
+
+#bottomBar{
+  display:flex;align-items:center;gap:8px;padding:8px 10px;
+  background:var(--surf);border-top:1px solid var(--border);flex-shrink:0;
+}
+#bottomBar span{font-size:.72rem;color:var(--dim)}
+#watchBtn{padding:7px 16px;background:var(--accent);border:none;border-radius:7px;color:#fff;font-size:.78rem;cursor:pointer;font-weight:600}
+#watchBtn:hover{background:#5a4bd1}
+#watchBtn:disabled{opacity:.4;cursor:default}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button class="navbtn" title="Back" onclick="send({type:'back'})">&#8592;</button>
+  <button class="navbtn" title="Forward" onclick="send({type:'forward'})">&#8594;</button>
+  <button class="navbtn" title="Reload" onclick="send({type:'reload'})">&#8635;</button>
+  <input id="urlBar" type="text" placeholder="Enter URL…" spellcheck="false"
+    onkeydown="if(event.key==='Enter'){navigate(this.value);this.blur()}">
+  <span id="connDot" title="Disconnected"></span>
+</div>
+
+<div id="platforms">
+  <button class="pp" data-platform="whatsapp" onclick="selectPlatform('whatsapp','https://web.whatsapp.com/')">WhatsApp</button>
+  <button class="pp" data-platform="telegram" onclick="selectPlatform('telegram','https://web.telegram.org/')">Telegram</button>
+  <button class="pp" data-platform="discord" onclick="selectPlatform('discord','https://discord.com/app')">Discord</button>
+  <button class="pp" data-platform="slack" onclick="selectPlatform('slack','https://app.slack.com/client')">Slack</button>
+</div>
+
+<div id="screen">
+  <canvas id="cvs" tabindex="0"></canvas>
+  <div id="overlay">
+    <div class="spin"></div>
+    <span id="overlayMsg">Connecting to browser…</span>
+    <button id="retryBtn" onclick="connect()">Reconnect</button>
+  </div>
+</div>
+
+<div id="bottomBar">
+  <span id="platformLabel">No platform selected — pick one above, log in, then mark it connected.</span>
+  <div style="flex:1"></div>
+  <button id="watchBtn" disabled onclick="markConnected()">Mark connected</button>
+</div>
+
+<script>
+'use strict';
+
+const cvs    = document.getElementById('cvs');
+const ctx    = cvs.getContext('2d');
+const dot    = document.getElementById('connDot');
+const urlBar = document.getElementById('urlBar');
+const overlay   = document.getElementById('overlay');
+const overlayMsg = document.getElementById('overlayMsg');
+const retryBtn  = document.getElementById('retryBtn');
+const spin = overlay.querySelector('.spin');
+const watchBtn = document.getElementById('watchBtn');
+const platformLabel = document.getElementById('platformLabel');
+
+let ws = null;
+let BW = 1280, BH = 800;
+let lastTouch = null;
+let latestFrame = null, rendering = false;
+let currentPlatform = null;
+let currentTabId = null;
+
+function connect() {
+  if (ws) { try { ws.close() } catch(e){} }
+  overlayMsg.textContent = 'Connecting…';
+  spin.style.display = 'block';
+  retryBtn.style.display = 'none';
+  overlay.classList.remove('gone');
+  dot.className = '';
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/api/viewer/stream`);
+
+  ws.onopen = () => { dot.className = 'on'; };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'frame') {
+      overlay.classList.add('gone');
+      queueFrame(msg.data, msg.w, msg.h);
+    } else if (msg.type === 'nav') {
+      if (msg.url && !msg.url.startsWith('about:') && !msg.url.startsWith('chrome:')) {
+        urlBar.value = msg.url;
+      }
+    } else if (msg.type === 'error') {
+      overlayMsg.textContent = 'Error: ' + msg.msg;
+      spin.style.display = 'none';
+      retryBtn.style.display = 'block';
+      overlay.classList.remove('gone');
+      dot.className = '';
+    }
+  };
+
+  ws.onerror = () => { dot.className = ''; };
+  ws.onclose = () => {
+    dot.className = '';
+    overlayMsg.textContent = 'Disconnected — browser still running';
+    spin.style.display = 'none';
+    retryBtn.style.display = 'block';
+    overlay.classList.remove('gone');
+  };
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function queueFrame(b64, w, h) {
+  latestFrame = { b64, w, h };
+  if (!rendering) renderLoop();
+}
+
+async function renderLoop() {
+  rendering = true;
+  while (latestFrame) {
+    const { b64, w, h } = latestFrame;
+    latestFrame = null;
+    if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; BW = w; BH = h; }
+    try {
+      const arr = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const bmp = await createImageBitmap(new Blob([arr], { type: 'image/jpeg' }));
+      ctx.drawImage(bmp, 0, 0, cvs.width, cvs.height);
+      bmp.close();
+    } catch(e) {}
+  }
+  rendering = false;
+}
+
+function toRemote(cx, cy) {
+  const r = cvs.getBoundingClientRect();
+  return { x: Math.round(cx * (BW / r.width)), y: Math.round(cy * (BH / r.height)) };
+}
+
+function navigate(url) {
+  if (!url) return;
+  if (!url.includes('://')) url = 'https://' + url;
+  urlBar.value = url;
+  send({ type: 'navigate', url });
+  cvs.focus();
+}
+
+function selectPlatform(platform, url) {
+  currentPlatform = platform;
+  document.querySelectorAll('.pp').forEach(b => b.classList.remove('status-connected'));
+  platformLabel.textContent = `${platform} — log in above, then tap "Mark connected".`;
+  watchBtn.disabled = false;
+  navigate(url);
+}
+
+async function markConnected() {
+  if (!currentPlatform) return;
+  watchBtn.disabled = true;
+  watchBtn.textContent = 'Saving…';
+  try {
+    const tabs = await fetch('/api/viewer/tabs').then(r => r.json());
+    const tab = tabs[0]; // single shared eyes-on-chat-browser tab for now
+    currentTabId = tab ? tab.id : null;
+    const resp = await fetch('/api/platforms/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: currentPlatform, tab_id: currentTabId || '' })
+    });
+    if (!resp.ok) throw new Error('server error ' + resp.status);
+    platformLabel.textContent = `${currentPlatform} connected — eyes-on-chat is now watching this tab for messages.`;
+    document.querySelector(`.pp[data-platform="${currentPlatform}"]`).classList.add('status-connected');
+  } catch (e) {
+    platformLabel.textContent = 'Failed to save: ' + e.message;
+  } finally {
+    watchBtn.disabled = false;
+    watchBtn.textContent = 'Mark connected';
+  }
+}
+
+// Mouse
+cvs.addEventListener('mousedown', e => {
+  e.preventDefault(); cvs.focus();
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(e.clientX - r.left, e.clientY - r.top);
+  const mod = (e.altKey?1:0)|(e.ctrlKey?2:0)|(e.metaKey?4:0)|(e.shiftKey?8:0);
+  send({ type:'mouse', action:'mousePressed', x, y, button:'left', clicks:1, mod });
+});
+cvs.addEventListener('mouseup', e => {
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(e.clientX - r.left, e.clientY - r.top);
+  send({ type:'mouse', action:'mouseReleased', x, y, button:'left', clicks:1 });
+});
+cvs.addEventListener('mousemove', e => {
+  if (e.buttons === 0) return;
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(e.clientX - r.left, e.clientY - r.top);
+  send({ type:'mouse', action:'mouseMoved', x, y, button:'none', clicks:0 });
+});
+cvs.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(e.clientX - r.left, e.clientY - r.top);
+  send({ type:'mouse', action:'mouseWheel', x, y, button:'none', clicks:0, dx:e.deltaX, dy:e.deltaY });
+}, { passive: false });
+cvs.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(e.clientX - r.left, e.clientY - r.top);
+  send({ type:'mouse', action:'mousePressed',  x, y, button:'right', clicks:1 });
+  send({ type:'mouse', action:'mouseReleased', x, y, button:'right', clicks:1 });
+});
+
+// Touch
+cvs.addEventListener('touchstart', e => {
+  e.preventDefault(); cvs.focus();
+  const t = e.touches[0];
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(t.clientX - r.left, t.clientY - r.top);
+  send({ type:'mouse', action:'mousePressed', x, y, button:'left', clicks:1 });
+  lastTouch = { x, y };
+}, { passive: false });
+cvs.addEventListener('touchend', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(t.clientX - r.left, t.clientY - r.top);
+  send({ type:'mouse', action:'mouseReleased', x, y, button:'left', clicks:1 });
+  lastTouch = null;
+}, { passive: false });
+cvs.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const r = cvs.getBoundingClientRect();
+  const { x, y } = toRemote(t.clientX - r.left, t.clientY - r.top);
+  if (lastTouch) {
+    const dy = (lastTouch.y - y) * 2.5;
+    send({ type:'mouse', action:'mouseWheel', x, y, button:'none', clicks:0, dx:0, dy });
+  }
+  lastTouch = { x, y };
+}, { passive: false });
+
+// Keyboard
+const SPECIAL_KEYS = {
+  'Backspace':8,'Tab':9,'Enter':13,'Escape':27,
+  'ArrowLeft':37,'ArrowUp':38,'ArrowRight':39,'ArrowDown':40,
+  'Delete':46,'Home':36,'End':35,'PageUp':33,'PageDown':34,
+  'F1':112,'F2':113,'F3':114,'F4':115,'F5':116,'F6':117,
+  'F7':118,'F8':119,'F9':120,'F10':121,'F11':122,'F12':123,
+};
+cvs.addEventListener('keydown', e => {
+  if (e.key === 'F12' || (e.ctrlKey && e.key === 'r') || (e.metaKey && e.key === 'r')) return;
+  e.preventDefault();
+  const mod = (e.altKey?1:0)|(e.ctrlKey?2:0)|(e.metaKey?4:0)|(e.shiftKey?8:0);
+  const kc = SPECIAL_KEYS[e.key] || e.keyCode || 0;
+  const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
+  const kt = isPrintable ? 'keyDown' : 'rawKeyDown';
+  const text = isPrintable ? e.key : '';
+  send({ type:'key', kt, key:e.key, code:e.code, text, mod, kc });
+});
+cvs.addEventListener('keyup', e => {
+  if (e.key === 'F12' || (e.ctrlKey && e.key === 'r') || (e.metaKey && e.key === 'r')) return;
+  e.preventDefault();
+  const mod = (e.altKey?1:0)|(e.ctrlKey?2:0)|(e.metaKey?4:0)|(e.shiftKey?8:0);
+  const kc = SPECIAL_KEYS[e.key] || e.keyCode || 0;
+  send({ type:'key', kt:'keyUp', key:e.key, code:e.code, text:'', mod, kc });
+});
+
+connect();
+</script>
+</body>
+</html>

@@ -160,6 +160,39 @@ body {
   opacity: 0.7;
 }
 .message.incoming .sender-label { color: var(--accent); }
+
+/* ===== CONFIRMATION BUTTONS ===== */
+.message.confirmation {
+  align-self: flex-start;
+  background: var(--incoming);
+  border: 1px solid var(--accent);
+  border-bottom-left-radius: 4px;
+}
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.confirm-btn {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.confirm-btn.yes { background: var(--accent); border-color: var(--accent); color: white; }
+.confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.confirm-answered {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--text2);
+  font-style: italic;
+}
 .message .time {
   font-size: 0.6rem;
   margin-top: 4px;
@@ -322,8 +355,10 @@ body {
       <span class="dot offline"></span> Connecting...
     </div>
   </div>
+  <a href="/platforms/status" title="Connected platforms"
+     style="margin-left:auto;font-size:1.2rem;text-decoration:none;color:var(--text2);padding:8px;">🔌</a>
   <button id="notifyBtn" onclick="enablePush()" title="Enable notifications"
-          style="margin-left:auto;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:8px;">🔕</button>
+          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:8px;">🔕</button>
 </div>
 
 <div id="handoffBanner" class="handoff-banner"></div>
@@ -529,13 +564,23 @@ function handleMessage(data) {
   }
 }
 
+let confirmCounter = 0;
+
 function addMessage(msg, isIncoming, prepend = false) {
   const list = document.getElementById('messagesList');
   const div = document.createElement('div');
-  
+
   if (msg.message_type === 'system') {
     div.className = 'message system';
     div.textContent = msg.content;
+  } else if (msg.message_type === 'confirmation' && msg.sender !== 'client') {
+    const confirmId = `confirm-${++confirmCounter}`;
+    div.className = 'message incoming confirmation';
+    div.innerHTML = `${escapeHtml(msg.content)}<div class="time">${formatTime(msg.created_at)}</div>` +
+      `<div class="confirm-actions" id="${confirmId}">` +
+      `<button class="confirm-btn yes" onclick="answerConfirm('${confirmId}', true)">Yes</button>` +
+      `<button class="confirm-btn no" onclick="answerConfirm('${confirmId}', false)">No</button>` +
+      `</div>`;
   } else if (msg.sender === 'client') {
     div.className = 'message outgoing';
     div.innerHTML = `${escapeHtml(msg.content)}<div class="time">${formatTime(msg.created_at)}</div>`;
@@ -552,6 +597,14 @@ function addMessage(msg, isIncoming, prepend = false) {
     list.appendChild(div);
     scrollToBottom();
   }
+}
+
+function answerConfirm(confirmId, isYes) {
+  const actions = document.getElementById(confirmId);
+  if (!actions) return;
+  actions.querySelectorAll('button').forEach(b => b.disabled = true);
+  actions.outerHTML = `<div class="confirm-answered">You replied: ${isYes ? 'Yes' : 'No'}</div>`;
+  sendText(isYes ? 'Yes' : 'No');
 }
 
 function showHandoffBanner(oldAgent, newAgent, reason) {
@@ -571,9 +624,11 @@ function sendMessage() {
   const input = document.getElementById('messageInput');
   const content = input.value.trim();
   if (!content) return;
-
   input.value = '';
-  
+  sendText(content);
+}
+
+function sendText(content) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'message', content }));
   } else {

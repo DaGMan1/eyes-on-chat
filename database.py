@@ -345,6 +345,16 @@ def update_connection_tab(session_id, platform, tab_id):
     conn.close()
 
 
+def list_connections():
+    """All platform connections, most recently active first."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM platform_connections ORDER BY last_heartbeat DESC, created_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # ============================================================
 # QR CODE DATA
 # ============================================================

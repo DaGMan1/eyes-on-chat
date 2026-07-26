@@ -658,6 +658,25 @@ async def platforms_page():
         return HTMLResponse(f.read())
 
 
+@app.get("/api/platforms/status")
+async def platforms_status():
+    """What's actually connected, per the database -- not just what the
+    browser happens to be logged into (those are different things)."""
+    return {"connections": db.list_connections()}
+
+
+@app.get("/platforms/status", response_class=HTMLResponse)
+async def platforms_status_page():
+    """Read-only status view: what's connected, when it last had activity.
+    Separate from /platforms (which is the live connect flow) on purpose --
+    this is "what's hooked up right now", not "go log into something"."""
+    path = os.path.join(os.path.dirname(__file__), "static", "platforms_status.html")
+    if not os.path.exists(path):
+        return HTMLResponse("<h1>Not built yet</h1>", status_code=501)
+    with open(path) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/sw.js")
 async def service_worker():
     """Served at the root path (not /static/sw.js) so its default scope covers

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>eyes-on-chat — Connected platforms</title>
+<style>
+:root{
+  --bg:#0b0b0f;--panel:#14141a;--border:#2a2a36;--text:#e8e8ee;--muted:#8888a0;
+  --accent:#6c5ce7;--green:#00e676;--red:#f87171;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:24px}
+.wrap{max-width:520px;margin:0 auto}
+.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+h1{font-size:18px;font-weight:600}
+.tag{color:var(--accent);font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px}
+a.addbtn{color:var(--accent);text-decoration:none;font-size:13px;border:1px solid var(--border);padding:8px 14px;border-radius:8px}
+a.addbtn:hover{border-color:var(--accent)}
+.row{display:flex;align-items:center;gap:14px;padding:16px 18px;background:var(--panel);border:1px solid var(--border);border-radius:14px;margin-bottom:10px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--green);flex-shrink:0;box-shadow:0 0 6px rgba(0,230,118,.5)}
+.name{font-weight:600;text-transform:capitalize;font-size:14px}
+.meta{font-size:12px;color:var(--muted);margin-top:2px}
+.empty{color:var(--muted);font-size:13px;text-align:center;padding:40px 20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <div class="tag">eyes-on-chat</div>
+      <h1>Connected platforms</h1>
+    </div>
+    <a class="addbtn" href="/platforms">+ Connect</a>
+  </div>
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+<script>
+async function load() {
+  const list = document.getElementById('list');
+  try {
+    const r = await fetch('/api/platforms/status');
+    const d = await r.json();
+    if (!d.connections || !d.connections.length) {
+      list.innerHTML = '<div class="empty">Nothing connected yet. Tap "+ Connect" to log into a platform.</div>';
+      return;
+    }
+    list.innerHTML = d.connections.map(c => `
+      <div class="row">
+        <div class="dot"></div>
+        <div>
+          <div class="name">${c.platform}</div>
+          <div class="meta">Connected ${new Date(c.created_at + 'Z').toLocaleString()}${c.last_heartbeat ? ' · active ' + new Date(c.last_heartbeat + 'Z').toLocaleString() : ''}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="empty">Failed to load: ' + e.message + '</div>';
+  }
+}
+load();
+</script>
+</body>
+</html>

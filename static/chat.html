@@ -743,14 +743,38 @@ function speakReply(text) {
   if (!plain) return;
 
   pauseRecognitionFor((resume) => {
-    const utter = new SpeechSynthesisUtterance(plain);
-    utter.lang = 'en-AU';
-    utter.rate = 1.0;
-    utter.onend = resume;
-    utter.onerror = resume;
-    setVoiceStatus('Speaking...');
-    speechSynthesis.cancel(); // don't queue on top of a previous reply
-    speechSynthesis.speak(utter);
+    speechSynthesis.cancel();
+    // Chrome has a long-standing bug where speak() called immediately after
+    // cancel() silently drops the utterance -- no error, no sound, nothing.
+    // A short delay avoids it. speechSynthesis.resume() is also needed
+    // defensively: backgrounding the tab (screen lock, app-switch) can leave
+    // the engine stuck "paused" from Chrome's own auto-pause-on-hide
+    // behaviour, which would otherwise silently swallow every future speak()
+    // until something explicitly resumes it.
+    setTimeout(() => {
+      const utter = new SpeechSynthesisUtterance(plain);
+      utter.lang = 'en-AU';
+      utter.rate = 1.0;
+
+      // Chrome (desktop and Android) has a separate bug where an utterance
+      // longer than ~15s of speech gets cut off mid-sentence unless the
+      // engine is nudged with pause()/resume() periodically while speaking.
+      // Harmless no-op for short replies, keeps long ones from going silent
+      // partway through.
+      let keepAlive = null;
+      const stopKeepAlive = () => { if (keepAlive) { clearInterval(keepAlive); keepAlive = null; } };
+      utter.onstart = () => {
+        keepAlive = setInterval(() => {
+          if (speechSynthesis.speaking) { speechSynthesis.pause(); speechSynthesis.resume(); }
+        }, 10000);
+      };
+      utter.onend = () => { stopKeepAlive(); resume(); };
+      utter.onerror = (e) => { stopKeepAlive(); console.warn('TTS error:', e.error); resume(); };
+
+      setVoiceStatus('Speaking...');
+      speechSynthesis.resume();
+      speechSynthesis.speak(utter);
+    }, 120);
   });
 }
 

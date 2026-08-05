@@ -582,8 +582,15 @@ function populateVoiceList() {
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return;
   const saved = localStorage.getItem('ttsVoiceURI') || '';
-  select.innerHTML = '<option value="">Default (en-AU)</option>' + voices
-    .map(v => `<option value="${v.voiceURI}">${v.name} (${v.lang})</option>`)
+  // Android Chrome exposes "network" voices that require a live connection
+  // to Google's TTS servers -- picking one sometimes silently no-ops back
+  // to the default with no error if the switch fails, which is exactly the
+  // "I changed it and nothing changed" symptom. On-device (localService)
+  // voices always actually work, so list them first and label the
+  // difference so it's a conscious pick, not a guess.
+  const sorted = [...voices].sort((a, b) => (b.localService - a.localService));
+  select.innerHTML = '<option value="">Default (en-AU)</option>' + sorted
+    .map(v => `<option value="${v.voiceURI}">${v.name} (${v.lang})${v.localService ? '' : ' — network'}</option>`)
     .join('');
   select.value = voices.some(v => v.voiceURI === saved) ? saved : '';
 }

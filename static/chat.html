@@ -545,8 +545,22 @@ const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRec
 let recognition = null;
 let voiceModeOn = false;
 let recognitionActive = false;   // recognition.start() called and not yet ended
-let suppressRecognition = false; // true while TTS is speaking or a message is being sent
+let suppressRecognition = false; // true while TTS is speaking -- mic must not hear it
 let pendingConfirmId = null;     // id of the most recent unanswered confirmation, or null
+
+// Android/Chrome's recognizer marks a chunk "final" on almost any short
+// pause -- sometimes after a single word -- regardless of continuous mode.
+// Sending on every final result produced exactly what Garry hit: a message
+// per word. Fix: never send straight off isFinal. Accumulate everything
+// (final chunks committed, interim chunk previewed) into voiceBuffer, and
+// only actually send once VOICE_SILENCE_MS passes with no new speech at
+// all -- that's what "he's stopped talking" actually looks like, not one
+// isFinal flag. The timer resets on every result, so a sentence with
+// several isFinal chunks and natural pauses between words still sends as
+// one message.
+let voiceBuffer = '';
+let voiceSilenceTimer = null;
+const VOICE_SILENCE_MS = 1600;
 
 function voiceSupported() {
   return !!SpeechRecognitionImpl && 'speechSynthesis' in window;
@@ -565,6 +579,9 @@ function toggleVoiceMode() {
   } else {
     stopRecognition();
     speechSynthesis.cancel();
+    clearTimeout(voiceSilenceTimer);
+    voiceBuffer = '';
+    document.getElementById('messageInput').value = '';
     showConnected(); // restore the normal "Online" status text
   }
 }
@@ -596,16 +613,22 @@ function startRecognition() {
   };
 
   recognition.onresult = (event) => {
-    const result = event.results[event.results.length - 1];
-    if (!result.isFinal) {
-      // Live preview in the input box so it's visible it's actually hearing
-      // him -- doesn't touch send, purely feedback.
-      document.getElementById('messageInput').value = result[0].transcript;
-      return;
+    // event.resultIndex is where *new* results start this event -- results
+    // before it were already processed (and, if final, already folded into
+    // voiceBuffer) in a previous event.
+    let interimText = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      if (res.isFinal) {
+        voiceBuffer = (voiceBuffer ? voiceBuffer + ' ' : '') + res[0].transcript.trim();
+      } else {
+        interimText += res[0].transcript;
+      }
     }
-    const transcript = result[0].transcript.trim();
-    document.getElementById('messageInput').value = '';
-    if (transcript) handleVoiceUtterance(transcript);
+    // Live preview (committed buffer + whatever's still being recognized)
+    // so it's visible the mic is actually hearing him -- doesn't send.
+    document.getElementById('messageInput').value = (voiceBuffer + ' ' + interimText).trim();
+    resetVoiceSilenceTimer();
   };
 
   recognition.onerror = (e) => {
@@ -624,9 +647,11 @@ function startRecognition() {
   recognition.onend = () => {
     recognitionActive = false;
     updateVoiceBtn();
-    // Browsers cap how long one continuous session runs (varies by vendor)
-    // -- restart automatically as long as voice mode is still on and we're
-    // not deliberately paused for TTS/sending.
+    // Android caps how long one session runs -- often just a few seconds,
+    // sometimes mid-sentence -- regardless of continuous:true. Restarting
+    // does NOT touch voiceBuffer, so words spoken right up to the cutoff
+    // are preserved and the next session's words get appended to them
+    // rather than starting a new, separate utterance.
     if (voiceModeOn && !suppressRecognition) {
       setTimeout(startRecognition, 300);
     }
@@ -649,8 +674,8 @@ function stopRecognition() {
 }
 
 // Stops listening, runs fn(resume), and only resumes listening once fn calls
-// resume() -- used around both sending a message and speaking a reply, so
-// the mic never picks up the phone's own TTS output as a new utterance.
+// resume() -- used around speaking a reply, so the mic never picks up the
+// phone's own TTS output as a new utterance.
 function pauseRecognitionFor(fn) {
   suppressRecognition = true;
   if (recognition) { try { recognition.onend = null; recognition.stop(); } catch(e) {} }
@@ -662,22 +687,38 @@ function pauseRecognitionFor(fn) {
   });
 }
 
+function resetVoiceSilenceTimer() {
+  clearTimeout(voiceSilenceTimer);
+  voiceSilenceTimer = setTimeout(commitVoiceBuffer, VOICE_SILENCE_MS);
+}
+
+// Fires once real silence has passed -- this is the only place a voice
+// utterance actually gets sent.
+function commitVoiceBuffer() {
+  const transcript = voiceBuffer.trim();
+  voiceBuffer = '';
+  document.getElementById('messageInput').value = '';
+  if (transcript) handleVoiceUtterance(transcript);
+}
+
 const YES_WORDS = ['yes', 'yeah', 'yep', 'yup', 'correct', 'confirm', 'affirmative'];
 const NO_WORDS = ['no', 'nope', 'nah', 'negative', 'cancel'];
 
 function handleVoiceUtterance(transcript) {
   const normalized = transcript.toLowerCase().replace(/[.!?]+$/, '').trim();
+  const firstWord = normalized.split(/\s+/)[0];
   // A pending confirmation (Yes/No prompt) takes voice priority over normal
   // send -- this is what makes approvals actually usable while driving,
   // the whole point of the "chat should mirror what's happening" ask.
   if (pendingConfirmId && document.getElementById(pendingConfirmId)) {
-    if (YES_WORDS.includes(normalized)) { answerConfirm(pendingConfirmId, true); return; }
-    if (NO_WORDS.includes(normalized)) { answerConfirm(pendingConfirmId, false); return; }
+    if (YES_WORDS.includes(normalized) || YES_WORDS.includes(firstWord)) { answerConfirm(pendingConfirmId, true); return; }
+    if (NO_WORDS.includes(normalized) || NO_WORDS.includes(firstWord)) { answerConfirm(pendingConfirmId, false); return; }
   }
-  pauseRecognitionFor((resume) => {
-    sendText(transcript);
-    resume();
-  });
+  // No mic pause needed here -- sending doesn't touch the speaker, so
+  // recognition can keep listening straight through into the next thing
+  // said, which is what makes this feel like a conversation rather than
+  // stop-start turns.
+  sendText(transcript);
 }
 
 function speakReply(text) {

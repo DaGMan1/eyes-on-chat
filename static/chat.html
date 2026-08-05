@@ -389,6 +389,8 @@ body {
      style="margin-left:auto;font-size:1.2rem;text-decoration:none;color:var(--text2);padding:14px;">🔌</a>
   <button id="voiceBtn" onclick="toggleVoiceMode()" title="Voice mode (hands-free)"
           style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:14px;">🎤</button>
+  <select id="voiceSelect" onchange="setPreferredVoice()" title="Reply voice"
+          style="background:none;border:none;color:var(--text2);font-size:.7rem;max-width:90px;padding:4px 0;"></select>
   <button id="notifyBtn" onclick="enablePush()" title="Enable notifications"
           style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:14px;">🔕</button>
 </div>
@@ -567,6 +569,34 @@ const DUPLICATE_WINDOW_MS = 4000; // guards against a stray repeat if a
 
 function voiceSupported() {
   return !!SpeechRecognitionImpl && 'speechSynthesis' in window;
+}
+
+// Reply voice picker -- browsers ship a fixed set of TTS voices and expose
+// no way to change accent/gender beyond picking a different one of those.
+// getVoices() can return empty until the async 'voiceschanged' event fires
+// (notably on Chrome), so populate on both.
+function populateVoiceList() {
+  if (!('speechSynthesis' in window)) return;
+  const select = document.getElementById('voiceSelect');
+  if (!select) return;
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const saved = localStorage.getItem('ttsVoiceURI') || '';
+  select.innerHTML = '<option value="">Default (en-AU)</option>' + voices
+    .map(v => `<option value="${v.voiceURI}">${v.name} (${v.lang})</option>`)
+    .join('');
+  select.value = voices.some(v => v.voiceURI === saved) ? saved : '';
+}
+
+function setPreferredVoice() {
+  const select = document.getElementById('voiceSelect');
+  if (!select) return;
+  localStorage.setItem('ttsVoiceURI', select.value);
+}
+
+if ('speechSynthesis' in window) {
+  speechSynthesis.onvoiceschanged = populateVoiceList;
+  populateVoiceList();
 }
 
 // Android's underlying speech service sometimes returns a "final" transcript
@@ -755,6 +785,11 @@ function speakReply(text) {
       const utter = new SpeechSynthesisUtterance(plain);
       utter.lang = 'en-AU';
       utter.rate = 1.0;
+      const savedVoiceURI = localStorage.getItem('ttsVoiceURI');
+      if (savedVoiceURI) {
+        const voice = speechSynthesis.getVoices().find(v => v.voiceURI === savedVoiceURI);
+        if (voice) { utter.voice = voice; utter.lang = voice.lang; }
+      }
 
       // Chrome (desktop and Android) has a separate bug where an utterance
       // longer than ~15s of speech gets cut off mid-sentence unless the

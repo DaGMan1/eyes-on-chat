@@ -569,6 +569,28 @@ function voiceSupported() {
   return !!SpeechRecognitionImpl && 'speechSynthesis' in window;
 }
 
+// Android's underlying speech service sometimes returns a "final" transcript
+// that's corrupted by replaying its own interim history: instead of just the
+// sentence spoken, it returns "w1 w1 w2 w1 w2 w3 ... w1 w2 ... wN" -- the
+// sentence re-said from scratch with one more word appended each time, all
+// concatenated into a single result. The word count of that garbage is
+// always a triangular number (1+2+...+N), and the real sentence is always
+// the last N words -- so detect and collapse it before it reaches send.
+// Applied to both the voice-mode path (SpeechRecognition) and manual
+// send (Android keyboard mic dictating into the textarea), since the same
+// OS-level speech service backs both.
+function collapseStutterTranscript(transcript) {
+  const words = transcript.split(/\s+/).filter(Boolean);
+  const m = words.length;
+  const n = Math.round((Math.sqrt(8 * m + 1) - 1) / 2);
+  if (n < 2 || (n * (n + 1)) / 2 !== m) return transcript; // not the pattern
+  const candidate = words.slice(m - n);
+  const rebuilt = [];
+  for (let k = 1; k <= n; k++) rebuilt.push(candidate.slice(0, k).join(' '));
+  if (rebuilt.join(' ') === words.join(' ')) return candidate.join(' ');
+  return transcript;
+}
+
 function toggleVoiceMode() {
   if (!voiceSupported()) {
     alert("This browser doesn't support hands-free voice mode. Works in Chrome on Android.");
@@ -621,7 +643,7 @@ function startRecognition() {
       document.getElementById('messageInput').value = result[0].transcript;
       return;
     }
-    const transcript = result[0].transcript.trim();
+    const transcript = collapseStutterTranscript(result[0].transcript.trim());
     document.getElementById('messageInput').value = '';
     if (transcript) handleVoiceUtterance(transcript);
   };
@@ -930,7 +952,7 @@ function showHandoffBanner(oldAgent, newAgent, reason) {
 
 function sendMessage() {
   const input = document.getElementById('messageInput');
-  const content = input.value.trim();
+  const content = collapseStutterTranscript(input.value.trim());
   if (!content) return;
   input.value = '';
   autoGrow(input);

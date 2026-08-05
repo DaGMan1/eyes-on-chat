@@ -94,6 +94,9 @@ html,body{height:100%;background:var(--bg);color:var(--txt);font-family:-apple-s
 <div id="platforms">
   <button class="pp" data-platform="whatsapp" onclick="selectPlatform('whatsapp','https://web.whatsapp.com/')">WhatsApp</button>
   <button class="pp" data-platform="telegram" onclick="selectPlatform('telegram','https://web.telegram.org/')">Telegram</button>
+  <button class="pp" data-platform="instagram" onclick="selectPlatform('instagram','https://www.instagram.com/direct/inbox/')">Instagram</button>
+  <button class="pp" data-platform="facebook_messenger" onclick="selectPlatform('facebook_messenger','https://www.messenger.com/')">Messenger</button>
+  <button class="pp" data-platform="tiktok" onclick="selectPlatform('tiktok','https://www.tiktok.com/messages')">TikTok</button>
   <button class="pp" data-platform="discord" onclick="selectPlatform('discord','https://discord.com/app')">Discord</button>
   <button class="pp" data-platform="slack" onclick="selectPlatform('slack','https://app.slack.com/client')">Slack</button>
 </div>
@@ -134,7 +137,23 @@ let latestFrame = null, rendering = false;
 let currentPlatform = null;
 let currentTabId = null;
 
-function connect() {
+// The browser this viewer controls (eyes-on-chat-browser) accumulates tabs
+// over time -- other work (research, etc.) opens tabs in the same isolated
+// instance. Previously the stream connected with no tab_id at all, which
+// silently falls back to "whatever tab is first in the CDP list" server-side
+// -- meaning clicks/keystrokes could land in a totally unrelated tab whenever
+// more than one was open. Pin to one specific, deliberately-chosen tab.
+async function ensureTab() {
+  const tabs = await fetch('/api/viewer/tabs').then(r => r.json());
+  const messagingDomains = ['web.whatsapp.com', 'web.telegram.org', 'instagram.com', 'messenger.com', 'tiktok.com', 'discord.com', 'app.slack.com'];
+  let tab = tabs.find(t => messagingDomains.some(d => (t.url || '').includes(d)));
+  if (!tab) tab = tabs.find(t => (t.url || '') === 'about:blank' || (t.url || '') === '');
+  if (tab) return tab.id;
+  const created = await fetch('/api/viewer/new-tab', { method: 'POST' }).then(r => r.json());
+  return created.tab_id;
+}
+
+async function connect() {
   if (ws) { try { ws.close() } catch(e){} }
   overlayMsg.textContent = 'Connecting…';
   spin.style.display = 'block';
@@ -142,8 +161,10 @@ function connect() {
   overlay.classList.remove('gone');
   dot.className = '';
 
+  currentTabId = await ensureTab();
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/api/viewer/stream`);
+  ws = new WebSocket(`${proto}://${location.host}/api/viewer/stream?tab_id=${currentTabId}`);
 
   ws.onopen = () => { dot.className = 'on'; };
 
@@ -226,9 +247,10 @@ async function markConnected() {
   watchBtn.disabled = true;
   watchBtn.textContent = 'Saving…';
   try {
-    const tabs = await fetch('/api/viewer/tabs').then(r => r.json());
-    const tab = tabs[0]; // single shared eyes-on-chat-browser tab for now
-    currentTabId = tab ? tab.id : null;
+    // Use the same tab the viewer is actually showing/controlling (set once
+    // in connect()'s ensureTab() call) -- re-fetching and grabbing tabs[0]
+    // here could silently pick a different tab than the one just logged into,
+    // which was the root cause of "mark connected" not doing what it should.
     const resp = await fetch('/api/platforms/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

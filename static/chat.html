@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Claude Chat</title>
 <link rel="manifest" href="/static/manifest.json">
 <meta name="theme-color" content="#0b0b0f">
@@ -83,8 +83,11 @@ body {
 .chat-header .back-btn {
   font-size: 1.3rem;
   cursor: pointer;
-  padding: 4px;
+  padding: 12px;
+  margin: -12px;
   color: var(--text2);
+  display: flex;
+  align-items: center;
 }
 
 /* ===== HANDOFF BANNER ===== */
@@ -126,7 +129,7 @@ body {
   max-width: 82%;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
-  font-size: 0.9rem;
+  font-size: 1.02rem;
   line-height: 1.45;
   word-wrap: break-word;
   position: relative;
@@ -160,6 +163,18 @@ body {
   opacity: 0.7;
 }
 .message.incoming .sender-label { color: var(--accent); }
+.message ul, .message ol { margin: 4px 0; padding-left: 20px; }
+.message li { margin: 2px 0; }
+.message strong { font-weight: 700; }
+.message a { color: inherit; text-decoration: underline; }
+.message.incoming a { color: var(--accent); }
+.message code {
+  background: rgba(127,127,127,0.18);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.85em;
+  font-family: 'SF Mono', Consolas, monospace;
+}
 
 /* ===== CONFIRMATION BUTTONS ===== */
 .message.confirmation {
@@ -175,12 +190,13 @@ body {
 }
 .confirm-btn {
   flex: 1;
-  padding: 8px 0;
+  min-height: 48px;
+  padding: 12px 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface2);
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -254,26 +270,30 @@ body {
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
-.input-bar input {
+.input-bar textarea {
   flex: 1;
   background: var(--surface2);
   border: 1px solid var(--border);
-  border-radius: 24px;
-  padding: 10px 16px;
+  border-radius: 20px;
+  padding: 12px 18px;
   color: var(--text);
-  font-size: 0.9rem;
+  font-size: 1.05rem;
+  line-height: 1.4;
   outline: none;
   font-family: inherit;
+  resize: none;
+  max-height: 140px;
+  overflow-y: auto;
 }
-.input-bar input::placeholder { color: var(--text2); }
-.input-bar input:focus { border-color: var(--accent); }
+.input-bar textarea::placeholder { color: var(--text2); }
+.input-bar textarea:focus { border-color: var(--accent); }
 .input-bar .send-btn {
-  width: 42px; height: 42px;
+  width: 56px; height: 56px;
   border-radius: 50%;
   border: none;
   background: var(--accent);
   color: white;
-  font-size: 1.1rem;
+  font-size: 1.4rem;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -356,9 +376,9 @@ body {
     </div>
   </div>
   <a href="/platforms/status" title="Connected platforms"
-     style="margin-left:auto;font-size:1.2rem;text-decoration:none;color:var(--text2);padding:8px;">🔌</a>
+     style="margin-left:auto;font-size:1.2rem;text-decoration:none;color:var(--text2);padding:14px;">🔌</a>
   <button id="notifyBtn" onclick="enablePush()" title="Enable notifications"
-          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:8px;">🔕</button>
+          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:14px;">🔕</button>
 </div>
 
 <div id="handoffBanner" class="handoff-banner"></div>
@@ -386,8 +406,9 @@ body {
 
 <!-- Input bar -->
 <div class="input-bar">
-  <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off"
-         onkeydown="if(event.key==='Enter') sendMessage()" oninput="onTyping()">
+  <textarea id="messageInput" placeholder="Type a message..." autocomplete="off" rows="1"
+         onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); sendMessage(); }"
+         oninput="onTyping(); autoGrow(this)"></textarea>
   <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
 </div>
 
@@ -527,6 +548,7 @@ function showConnected() {
   status.innerHTML = '<span class="dot"></span> Online';
   document.getElementById('welcomeScreen').style.display = 'none';
   document.getElementById('messagesContainer').style.display = 'flex';
+  scrollToBottom();
 }
 
 function showDisconnected() {
@@ -558,13 +580,62 @@ function handleMessage(data) {
     case 'agent_change':
       showHandoffBanner(data.old_agent, data.new_agent, data.reason);
       // Update header
-      document.querySelector('.chat-header .info .name').textContent = 
-        data.new_agent.charAt(0).toUpperCase() + data.new_agent.slice(1);
+      document.querySelector('.chat-header .info .name').textContent =
+        displayAgentName(data.new_agent);
       break;
   }
 }
 
 let confirmCounter = 0;
+
+// Raw agent_name values are internal identifiers (Linux account / bridge
+// name), never meant for the UI -- map to the friendly name shown in the
+// header. Falls back to a title-cased version of anything not listed here.
+const AGENT_DISPLAY_NAMES = { root: 'Claude', cosidekick: 'Claude', q: 'Q' };
+function displayAgentName(name) {
+  if (!name) return '';
+  const key = name.toLowerCase();
+  if (AGENT_DISPLAY_NAMES[key]) return AGENT_DISPLAY_NAMES[key];
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+// Lightweight, dependency-free markdown for chat bubbles: bold, inline code,
+// and bullet/numbered lists -- the patterns replies actually use. Operates
+// on already-HTML-escaped text, so the only tags it can introduce are the
+// ones it inserts itself; no user/agent content can inject markup.
+function renderMarkdownLite(escapedText) {
+  const withInline = escapedText
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+?)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  const lines = withInline.split('\n');
+  const pieces = [];
+  let listType = null, listHtml = '';
+  const flushList = () => {
+    if (listType) { pieces.push({ list: true, html: `<${listType}>${listHtml}</${listType}>` }); listType = null; listHtml = ''; }
+  };
+  for (const raw of lines) {
+    const bullet = raw.match(/^\s*[-*]\s+(.*)/);
+    const numbered = raw.match(/^\s*\d+\.\s+(.*)/);
+    const item = bullet || numbered;
+    if (item) {
+      const type = bullet ? 'ul' : 'ol';
+      if (listType !== type) flushList();
+      listType = type;
+      listHtml += `<li>${item[1]}</li>`;
+    } else {
+      flushList();
+      pieces.push({ list: false, text: raw });
+    }
+  }
+  flushList();
+
+  return pieces.map((p, i) => {
+    if (p.list) return p.html;
+    return (i > 0 && !pieces[i - 1].list ? '<br>' : '') + p.text;
+  }).join('');
+}
 
 function addMessage(msg, isIncoming, prepend = false) {
   const list = document.getElementById('messagesList');
@@ -576,7 +647,8 @@ function addMessage(msg, isIncoming, prepend = false) {
   } else if (msg.message_type === 'confirmation' && msg.sender !== 'client') {
     const confirmId = `confirm-${++confirmCounter}`;
     div.className = 'message incoming confirmation';
-    div.innerHTML = `${escapeHtml(msg.content)}<div class="time">${formatTime(msg.created_at)}</div>` +
+    div.dataset.sender = msg.sender_name || '';
+    div.innerHTML = `${renderMarkdownLite(escapeHtml(msg.content))}<div class="time">${formatTime(msg.created_at)}</div>` +
       `<div class="confirm-actions" id="${confirmId}">` +
       `<button class="confirm-btn yes" onclick="answerConfirm('${confirmId}', true)">Yes</button>` +
       `<button class="confirm-btn no" onclick="answerConfirm('${confirmId}', false)">No</button>` +
@@ -586,9 +658,17 @@ function addMessage(msg, isIncoming, prepend = false) {
     div.innerHTML = `${escapeHtml(msg.content)}<div class="time">${formatTime(msg.created_at)}</div>`;
   } else {
     div.className = 'message incoming';
-    div.innerHTML = msg.sender_name && msg.sender_name !== 'agent'
-      ? `<div class="sender-label">${escapeHtml(msg.sender_name)}</div>${escapeHtml(msg.content)}<div class="time">${formatTime(msg.created_at)}</div>`
-      : `${escapeHtml(msg.content)}<div class="time">${formatTime(msg.created_at)}</div>`;
+    div.dataset.sender = msg.sender_name || '';
+    // Only label the message when the agent differs from whichever incoming
+    // message sits next to it in the DOM -- avoids repeating "Claude" on
+    // every single bubble in a 1:1 conversation, same convention as
+    // WhatsApp/iMessage. Read from the DOM (not a running variable) so it
+    // stays correct regardless of append vs. prepend (loadOlder) order.
+    const neighbor = prepend ? list.firstElementChild : list.lastElementChild;
+    const neighborSender = neighbor && neighbor.classList.contains('incoming') ? neighbor.dataset.sender : undefined;
+    const showLabel = msg.sender_name && msg.sender_name !== neighborSender;
+    div.innerHTML = (showLabel ? `<div class="sender-label">${escapeHtml(displayAgentName(msg.sender_name))}</div>` : '') +
+      `${renderMarkdownLite(escapeHtml(msg.content))}<div class="time">${formatTime(msg.created_at)}</div>`;
   }
 
   if (prepend) {
@@ -625,7 +705,13 @@ function sendMessage() {
   const content = input.value.trim();
   if (!content) return;
   input.value = '';
+  autoGrow(input);
   sendText(content);
+}
+
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
 }
 
 function sendText(content) {
@@ -738,6 +824,15 @@ function showWelcome() {
 // ============================================================
 
 document.addEventListener('DOMContentLoaded', init);
+
+// PWA resume (app-switcher back to an already-running instance) doesn't
+// re-fire DOMContentLoaded, so init()'s scroll-to-bottom never reruns on its
+// own -- without this, reopening the app leaves you wherever the scroll
+// position happened to be left last time.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) scrollToBottom();
+});
+window.addEventListener('pageshow', () => scrollToBottom());
 </script>
 </body>
 </html>

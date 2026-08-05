@@ -839,7 +839,12 @@ async def startup():
     logger.info("Chat database initialized")
 
     global platform_watcher
-    from cdp_integration import create_watcher
+    if os.environ.get("USE_BROWSER_USE_CDP", "0") == "1":
+        from browser_use_integration import create_watcher
+        logger.info("Platform watcher backend: browser-use (LLM-driven reads/sends)")
+    else:
+        from cdp_integration import create_watcher
+        logger.info("Platform watcher backend: cdp_integration (selector-based)")
     platform_watcher = create_watcher()
 
     # Tab registrations live only in memory (self._tabs), so a service
@@ -847,9 +852,10 @@ async def startup():
     # the DB (and /platforms/status) still shows it as connected. Rehydrate
     # from platform_connections on boot.
     for conn in db.list_connections():
-        if conn.get("tab_id"):
+        if conn.get("tab_id") and conn.get("status") != "disconnected":
             await platform_watcher.register_tab_by_id(
-                conn["session_id"], conn["platform"], conn["tab_id"]
+                conn["session_id"], conn["platform"], conn["tab_id"],
+                last_count=conn.get("last_count") or 0
             )
             logger.info("Rehydrated %s tab for session %s", conn["platform"], conn["session_id"])
 

@@ -35,6 +35,7 @@ echo "Starting Chrome..."
     --display=:$DISPLAY_NUM \
     --remote-debugging-port=$CDP_PORT --remote-debugging-address=0.0.0.0 --remote-allow-origins=* \
     --user-data-dir=$CHROME_DATA \
+    --proxy-server=socks5://172.16.0.1:1080 \
     --no-first-run \
     --disable-default-apps \
     --disable-sync \

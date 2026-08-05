@@ -108,7 +108,7 @@ class CloakCDP:
                             return message
         except Exception as e:
             logger.error("CDP command failed %s: %s", method, e)
-            return {}
+            raise
 
     async def evaluate(self, target_id: str, expression: str) -> str:
         """Evaluate JavaScript in a tab. Returns the result as a string
@@ -135,14 +135,36 @@ class CloakCDP:
     WHATSAPP_INPUT_SELECTOR = "div[contenteditable='true'][spellcheck='true']"
     
     async def get_whatsapp_messages(self, target_id: str) -> list[dict]:
-        """Get visible messages from WhatsApp Web tab."""
+        """Get visible messages from WhatsApp Web tab.
+
+        WhatsApp Web has since moved to StyleX-style atomic/hashed class names
+        (confirmed live -- classes like "x1iyjqo2 x6ikm8r ..." are build-generated,
+        not the old ".message-in"/".selectable-text" semantic classes this used
+        to target, which now match nothing). Rebuilt against stable attributes
+        instead: `[data-testid="msg-container"]`/`[data-testid="selectable-text"]`
+        don't appear to churn per-build the way class names do, and
+        `.copyable-text[data-pre-plain-text]` carries "[time, date] Name: " --
+        the actual sender's name for incoming messages, blank/no-name for
+        messages Garry sent himself. No reliable in/out class survived the
+        rebuild, so self vs. client is inferred from whether that name parse
+        found anything, not from bubble alignment/class."""
         js = """
         (() => {
-            const msgs = document.querySelectorAll('.message-in span.selectable-text, .message-out span.selectable-text');
-            return Array.from(msgs).map(el => ({
-                text: el.innerText.trim(),
-                sender: el.closest('.message-in') ? 'client' : 'self'
-            }));
+            const containers = document.querySelectorAll('[data-testid="msg-container"]');
+            const out = [];
+            containers.forEach(c => {
+                const textEl = c.querySelector('span[data-testid="selectable-text"]');
+                if (!textEl) return;
+                const pre = c.querySelector('.copyable-text')?.getAttribute('data-pre-plain-text') || '';
+                const m = pre.match(/\\]\\s*(.*?):\\s*$/);
+                const name = m ? m[1] : '';
+                out.push({
+                    text: textEl.innerText.trim(),
+                    sender: name ? 'client' : 'self',
+                    sender_name: name
+                });
+            });
+            return out;
         })()
         """
         # returnByValue already gives back a decoded Python list -- no
@@ -194,14 +216,19 @@ class CloakCDP:
     # PLATFORM-SPECIFIC: TELEGRAM WEB
     # ----------------------------------------------------------
     
-    TELEGRAM_MESSAGE_SELECTOR = ".bubble.is-in .text, .bubble.is-out .text"
+    # Confirmed live against a real open conversation: ".text" no longer
+    # exists on Telegram Web K's message bubbles -- the text now lives in
+    # ".message" (or nested "span.translatable-message"). ".is-in"/".is-out"
+    # on the ".bubble" ancestor are still real and correctly distinguish
+    # direction, unlike WhatsApp where no such class survived.
+    TELEGRAM_MESSAGE_SELECTOR = ".bubble.is-in .message, .bubble.is-out .message"
     TELEGRAM_INPUT_SELECTOR = ".input-message-input"
-    
+
     async def get_telegram_messages(self, target_id: str) -> list[dict]:
         """Get visible messages from Telegram Web tab."""
         js = """
         (() => {
-            const msgs = document.querySelectorAll('.bubble .text');
+            const msgs = document.querySelectorAll('.bubble .message');
             return Array.from(msgs).map(el => ({
                 text: el.innerText.trim(),
                 sender: el.closest('.is-in') ? 'client' : 'self'
@@ -234,9 +261,156 @@ class CloakCDP:
         return result is True
     
     # ----------------------------------------------------------
+    # PLATFORM-SPECIFIC: INSTAGRAM DIRECT
+    #
+    # UNVERIFIED -- Instagram's web DOM uses auto-generated/obfuscated class
+    # names that rotate between deploys (unlike WhatsApp/Telegram's stable
+    # classes), so there's no way to get exact working selectors without
+    # inspecting a real logged-in thread. These use `dir="auto"` (Instagram's
+    # own text-direction marker on user-generated content, historically more
+    # stable than its class names) and the documented placeholder-based input
+    # selector. Confirm against a real screenshot the moment an account is
+    # logged in -- do not assume these work untested.
+    # ----------------------------------------------------------
+
+    INSTAGRAM_MESSAGE_SELECTOR = "div[role='row'] div[dir='auto']"
+    INSTAGRAM_INPUT_SELECTOR = "textarea[placeholder='Message...']"
+
+    async def get_instagram_messages(self, target_id: str) -> list[dict]:
+        """Get visible messages from an Instagram Direct thread tab. UNVERIFIED."""
+        js = """
+        (() => {
+            const rows = document.querySelectorAll("div[role='row']");
+            return Array.from(rows).map(row => {
+                const textEl = row.querySelector("div[dir='auto']");
+                if (!textEl) return null;
+                // Best-effort sender guess: IG right-aligns your own outgoing
+                // bubbles -- untested against a real thread.
+                const rect = row.getBoundingClientRect();
+                const isOwn = rect.left > (window.innerWidth / 2);
+                return { text: textEl.innerText.trim(), sender: isOwn ? 'self' : 'client' };
+            }).filter(Boolean);
+        })()
+        """
+        result = await self.evaluate(target_id, js)
+        return result if isinstance(result, list) else []
+
+    async def send_instagram_reply(self, target_id: str, text: str) -> bool:
+        """Type a reply into Instagram Direct and send it. UNVERIFIED."""
+        escaped = text.replace("'", "\\'").replace("\n", "\\n")
+        js = f"""
+        (() => {{
+            const input = document.querySelector("textarea[placeholder='Message...']");
+            if (!input) return false;
+            input.focus();
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+            setter.call(input, '{escaped}');
+            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            const event = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', which: 13, keyCode: 13, bubbles: true }});
+            input.dispatchEvent(event);
+            return true;
+        }})()
+        """
+        result = await self.evaluate(target_id, js)
+        return result is True
+
+    # ----------------------------------------------------------
+    # PLATFORM-SPECIFIC: FACEBOOK MESSENGER
+    #
+    # UNVERIFIED -- same obfuscated-class caveat as Instagram (both are Meta
+    # properties, same build pipeline). `aria-label="Message"` on the
+    # contenteditable input is the one documented, accessibility-driven
+    # selector likely to survive a deploy; message-bubble detection below is
+    # a real guess, not confirmed against a live thread.
+    # ----------------------------------------------------------
+
+    FACEBOOK_MESSENGER_INPUT_SELECTOR = "div[aria-label='Message'][contenteditable='true']"
+
+    async def get_facebook_messenger_messages(self, target_id: str) -> list[dict]:
+        """Get visible messages from a Facebook Messenger thread tab. UNVERIFIED."""
+        js = """
+        (() => {
+            const bubbles = document.querySelectorAll("div[role='row'] div[dir='auto']");
+            return Array.from(bubbles).map(el => {
+                const rect = el.getBoundingClientRect();
+                const isOwn = rect.left > (window.innerWidth / 2);
+                return { text: el.innerText.trim(), sender: isOwn ? 'self' : 'client' };
+            }).filter(m => m.text.length > 0);
+        })()
+        """
+        result = await self.evaluate(target_id, js)
+        return result if isinstance(result, list) else []
+
+    async def send_facebook_messenger_reply(self, target_id: str, text: str) -> bool:
+        """Type a reply into Facebook Messenger and send it. UNVERIFIED."""
+        escaped = text.replace("'", "\\'").replace("\n", "\\n")
+        js = f"""
+        (() => {{
+            const input = document.querySelector("div[aria-label='Message'][contenteditable='true']");
+            if (!input) return false;
+            input.focus();
+            input.innerHTML = '';
+            const textNode = document.createTextNode('{escaped}');
+            input.appendChild(textNode);
+            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            const event = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', which: 13, keyCode: 13, bubbles: true }});
+            input.dispatchEvent(event);
+            return true;
+        }})()
+        """
+        result = await self.evaluate(target_id, js)
+        return result is True
+
+    # ----------------------------------------------------------
+    # PLATFORM-SPECIFIC: TIKTOK MESSAGES
+    #
+    # UNVERIFIED but on firmer ground than IG/Messenger -- TikTok's web app
+    # ships `data-e2e` test attributes in production (their own QA hooks),
+    # which tend to be far more stable than generated class names. Still
+    # needs confirming against a real logged-in inbox.
+    # ----------------------------------------------------------
+
+    TIKTOK_MESSAGE_SELECTOR = "div[data-e2e='chat-item']"
+    TIKTOK_INPUT_SELECTOR = "div[data-e2e='message-input-area']"
+
+    async def get_tiktok_messages(self, target_id: str) -> list[dict]:
+        """Get visible messages from a TikTok Messages thread tab. UNVERIFIED."""
+        js = """
+        (() => {
+            const items = document.querySelectorAll("div[data-e2e='chat-item']");
+            return Array.from(items).map(el => ({
+                text: el.innerText.trim(),
+                sender: el.classList.toString().toLowerCase().includes('self') ? 'self' : 'client'
+            }));
+        })()
+        """
+        result = await self.evaluate(target_id, js)
+        return result if isinstance(result, list) else []
+
+    async def send_tiktok_reply(self, target_id: str, text: str) -> bool:
+        """Type a reply into TikTok Messages and send it. UNVERIFIED."""
+        escaped = text.replace("'", "\\'").replace("\n", "\\n")
+        js = f"""
+        (() => {{
+            const input = document.querySelector("div[data-e2e='message-input-area']");
+            if (!input) return false;
+            input.focus();
+            input.innerHTML = '';
+            const textNode = document.createTextNode('{escaped}');
+            input.appendChild(textNode);
+            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            const event = new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', which: 13, keyCode: 13, bubbles: true }});
+            input.dispatchEvent(event);
+            return true;
+        }})()
+        """
+        result = await self.evaluate(target_id, js)
+        return result is True
+
+    # ----------------------------------------------------------
     # GENERIC PLATFORM SUPPORT
     # ----------------------------------------------------------
-    
+
     async def detect_new_messages(self, target_id: str, platform: str, last_known_count: int = 0) -> list:
         """
         Generic message detection. Returns new messages since last check.
@@ -246,6 +420,12 @@ class CloakCDP:
             msgs = await self.get_whatsapp_messages(target_id)
         elif platform == "telegram":
             msgs = await self.get_telegram_messages(target_id)
+        elif platform == "instagram":
+            msgs = await self.get_instagram_messages(target_id)
+        elif platform == "facebook_messenger":
+            msgs = await self.get_facebook_messenger_messages(target_id)
+        elif platform == "tiktok":
+            msgs = await self.get_tiktok_messages(target_id)
         else:
             # Generic: grab all text content from the page body
             js = "document.body.innerText.substring(0, 10000)"
@@ -266,6 +446,12 @@ class CloakCDP:
             return await self.send_whatsapp_reply(target_id, text)
         elif platform == "telegram":
             return await self.send_telegram_reply(target_id, text)
+        elif platform == "instagram":
+            return await self.send_instagram_reply(target_id, text)
+        elif platform == "facebook_messenger":
+            return await self.send_facebook_messenger_reply(target_id, text)
+        elif platform == "tiktok":
+            return await self.send_tiktok_reply(target_id, text)
         else:
             logger.warning(f"No reply handler for platform: {platform}")
             return False
@@ -275,12 +461,15 @@ class CloakCDP:
 # WATCHER — Polls Cloak tabs for new messages
 # ============================================================
 
+MAX_TAB_POLL_FAILURES = 3
+
+
 class PlatformWatcher:
     """
     Watches a Cloak browser tab for new messages and forwards them
     to the chat API.
     """
-    
+
     def __init__(self, cdp: CloakCDP, chat_api_url: str = "http://127.0.0.1:8250"):
         self.cdp = cdp
         self.chat_api_url = chat_api_url
@@ -295,19 +484,22 @@ class PlatformWatcher:
             return False
         return self._register(session_id, platform, tab["id"])
 
-    async def register_tab_by_id(self, session_id: str, platform: str, target_id: str) -> bool:
+    async def register_tab_by_id(self, session_id: str, platform: str, target_id: str, last_count: int = 0) -> bool:
         """Register a platform tab to watch, when the caller already knows the
         exact CDP target ID (e.g. the web UI picked it via /api/viewer/tabs) --
-        skips the URL-pattern lookup register_tab() does."""
-        return self._register(session_id, platform, target_id)
+        skips the URL-pattern lookup register_tab() does. last_count should be
+        passed from the persisted value on rehydration (see app.py startup) --
+        defaulting to 0 here re-ingests the whole visible backlog as "new"."""
+        return self._register(session_id, platform, target_id, last_count)
 
-    def _register(self, session_id: str, platform: str, target_id: str) -> bool:
+    def _register(self, session_id: str, platform: str, target_id: str, last_count: int = 0) -> bool:
         if session_id not in self._tabs:
             self._tabs[session_id] = {}
 
         self._tabs[session_id][platform] = {
             "target_id": target_id,
-            "last_count": 0
+            "last_count": last_count,
+            "fail_count": 0
         }
 
         logger.info(f"Watching {platform} for session {session_id} (tab: {target_id})")
@@ -333,14 +525,30 @@ class PlatformWatcher:
                                 "platform": platform,
                                 "content": msg["text"],
                                 "sender": "client",
-                                "sender_name": "Client (via " + platform + ")"
+                                "sender_name": msg.get("sender_name") or ("Client (via " + platform + ")")
                             }
                         )
                     
-                    state["last_count"] += len(new_msgs)
-                    
+                    if new_msgs:
+                        state["last_count"] += len(new_msgs)
+                        import database as db
+                        db.update_connection_count(session_id, platform, state["last_count"])
+                    state["fail_count"] = 0
+
                 except Exception as e:
-                    logger.error(f"Poll error [{session_id}/{platform}]: {e}")
+                    state["fail_count"] += 1
+                    if state["fail_count"] < MAX_TAB_POLL_FAILURES:
+                        logger.error(f"Poll error [{session_id}/{platform}]: {e}")
+                    else:
+                        logger.warning(
+                            f"Tab dead after {MAX_TAB_POLL_FAILURES} consecutive failures "
+                            f"[{session_id}/{platform}], disconnecting: {e}"
+                        )
+                        del self._tabs[session_id][platform]
+                        if not self._tabs[session_id]:
+                            del self._tabs[session_id]
+                        import database as db
+                        db.mark_connection_status(session_id, platform, "disconnected")
     
     async def poll_loop(self, interval: float = 5.0):
         """Continuously poll tabs for new messages."""
@@ -356,7 +564,11 @@ class PlatformWatcher:
             return False
         
         state = self._tabs[session_id][platform]
-        return await self.cdp.send_reply(state["target_id"], platform, text)
+        try:
+            return await self.cdp.send_reply(state["target_id"], platform, text)
+        except Exception as e:
+            logger.error(f"Send failed [{session_id}/{platform}]: {e}")
+            return False
     
     async def close(self):
         await self.http.aclose()

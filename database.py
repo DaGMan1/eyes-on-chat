@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS platform_connections (
     status TEXT DEFAULT 'active',
     last_heartbeat TIMESTAMP,
     created_at TIMESTAMP DEFAULT (datetime('now')),
+    last_count INTEGER DEFAULT 0,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -226,11 +227,22 @@ def get_unread_messages(session_id=None, agent_name=None):
             (session_id,)
         ).fetchall()
     elif agent_name:
-        # Get messages from sessions assigned to this agent
+        # Get messages from sessions assigned to this agent.
+        # platform='webchat' only -- this feeds the interactive agent's
+        # auto-reply loop (agent_next), which must only see things Garry
+        # actually typed. Without this filter, every ingested WhatsApp/
+        # Telegram/etc. message from a connected platform looked identical
+        # to a real message from Garry and got auto-replied to individually
+        # -- confirmed live: this produced a wall of confused "that doesn't
+        # seem meant for me" replies when 30+ backlog platform messages got
+        # queued at once. Platform content still shows up in chat history
+        # (get_messages) and in unread counts (the session_id branch above)
+        # -- it's just excluded from "things the agent should respond to."
         rows = conn.execute(
             """SELECT m.* FROM messages m
                JOIN agent_assignments a ON m.session_id = a.session_id
                WHERE a.agent_name=? AND a.is_active=1 AND m.read=0
+               AND m.platform='webchat'
                ORDER BY m.created_at ASC""",
             (agent_name,)
         ).fetchall()
@@ -339,10 +351,20 @@ def remove_push_subscription(endpoint):
 # ============================================================
 
 def add_connection(session_id, platform, tab_id=""):
-    """Track a Cloak browser tab for a platform."""
+    """Track a Cloak browser tab for a platform. Replaces any existing
+    connection for the same (session_id, platform) instead of piling up
+    duplicate rows -- a stale duplicate previously won on restart (whichever
+    row list_connections() happened to process last into PlatformWatcher's
+    single-entry-per-platform dict), silently pointing the watcher at a dead
+    tab_id while the DB still showed the live one as "connected" too."""
     conn = get_conn()
     conn.execute(
-        "INSERT INTO platform_connections (session_id, platform, tab_id) VALUES (?, ?, ?)",
+        "DELETE FROM platform_connections WHERE session_id=? AND platform=?",
+        (session_id, platform)
+    )
+    conn.execute(
+        "INSERT INTO platform_connections (session_id, platform, tab_id, last_heartbeat) "
+        "VALUES (?, ?, ?, datetime('now'))",
         (session_id, platform, tab_id)
     )
     conn.commit()
@@ -355,6 +377,35 @@ def update_connection_tab(session_id, platform, tab_id):
     conn.execute(
         "UPDATE platform_connections SET tab_id=?, last_heartbeat=datetime('now') WHERE session_id=? AND platform=?",
         (tab_id, session_id, platform)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_connection_count(session_id, platform, last_count):
+    """Persist how many messages have already been seen for this connection.
+
+    PlatformWatcher previously kept this only in memory -- every service
+    restart reset it to 0, so the whole visible chat backlog got re-ingested
+    as "new" on every restart. Confirmed live: this was the actual source of
+    the duplicate-message flood that fed the auto-reply bug on 2026-08-02."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE platform_connections SET last_count=? WHERE session_id=? AND platform=?",
+        (last_count, session_id, platform)
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_connection_status(session_id, platform, status):
+    """Flip a connection's status (e.g. 'disconnected' once its tab stops
+    responding) so /platforms/status reflects reality instead of a watcher
+    that gave up silently while the DB still says 'active'."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE platform_connections SET status=? WHERE session_id=? AND platform=?",
+        (status, session_id, platform)
     )
     conn.commit()
     conn.close()

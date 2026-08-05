@@ -362,6 +362,16 @@ body {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ===== VOICE MODE ===== */
+#voiceBtn.voice-active {
+  color: var(--accent);
+  animation: micPulse 1.4s ease infinite;
+}
+@keyframes micPulse {
+  0%, 100% { text-shadow: 0 0 0 rgba(108, 92, 231, 0); }
+  50% { text-shadow: 0 0 10px var(--accent-glow); }
+}
 </style>
 </head>
 <body>
@@ -377,6 +387,8 @@ body {
   </div>
   <a href="/platforms/status" title="Connected platforms"
      style="margin-left:auto;font-size:1.2rem;text-decoration:none;color:var(--text2);padding:14px;">🔌</a>
+  <button id="voiceBtn" onclick="toggleVoiceMode()" title="Voice mode (hands-free)"
+          style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:14px;">🎤</button>
   <button id="notifyBtn" onclick="enablePush()" title="Enable notifications"
           style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2);padding:14px;">🔕</button>
 </div>
@@ -437,6 +449,15 @@ async function init() {
   connectWebSocket();
   await loadMessages();
   initPush();
+
+  // Voice mode is opt-in via a tap (browsers require a user gesture for
+  // the first mic-permission prompt) but persists across reloads/app-resume
+  // once granted, so driving sessions survive the phone locking/backgrounding.
+  if (voiceSupported() && localStorage.getItem('voiceMode') === '1') {
+    voiceModeOn = true;
+    updateVoiceBtn();
+    startRecognition();
+  }
 }
 
 // ============================================================
@@ -510,6 +531,177 @@ async function enablePush() {
 }
 
 // ============================================================
+// VOICE MODE (hands-free -- built for driving, not desktop use)
+//
+// One tap turns it on; a wake word was considered and rejected -- browsers
+// only grant microphone access on a real user gesture, so there's no way to
+// start listening without a tap regardless, and a persistent always-on
+// listener would burn battery/data for the whole drive. The tap-once
+// approach also matches how Garry already starts a drive: get in, tap,
+// go hands-free from there.
+// ============================================================
+
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let voiceModeOn = false;
+let recognitionActive = false;   // recognition.start() called and not yet ended
+let suppressRecognition = false; // true while TTS is speaking or a message is being sent
+let pendingConfirmId = null;     // id of the most recent unanswered confirmation, or null
+
+function voiceSupported() {
+  return !!SpeechRecognitionImpl && 'speechSynthesis' in window;
+}
+
+function toggleVoiceMode() {
+  if (!voiceSupported()) {
+    alert("This browser doesn't support hands-free voice mode. Works in Chrome on Android.");
+    return;
+  }
+  voiceModeOn = !voiceModeOn;
+  localStorage.setItem('voiceMode', voiceModeOn ? '1' : '0');
+  updateVoiceBtn();
+  if (voiceModeOn) {
+    startRecognition();
+  } else {
+    stopRecognition();
+    speechSynthesis.cancel();
+    showConnected(); // restore the normal "Online" status text
+  }
+}
+
+function updateVoiceBtn() {
+  const btn = document.getElementById('voiceBtn');
+  if (!btn) return;
+  btn.textContent = voiceModeOn ? '🎙️' : '🎤';
+  btn.classList.toggle('voice-active', voiceModeOn && recognitionActive);
+  btn.title = voiceModeOn ? 'Voice mode on -- tap to stop' : 'Voice mode (hands-free)';
+}
+
+function setVoiceStatus(text) {
+  if (!voiceModeOn) return;
+  document.getElementById('connectionStatus').innerHTML = `<span class="dot"></span> ${text}`;
+}
+
+function startRecognition() {
+  if (!voiceModeOn || suppressRecognition || recognitionActive) return;
+  recognition = new SpeechRecognitionImpl();
+  recognition.lang = 'en-AU';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    recognitionActive = true;
+    updateVoiceBtn();
+    setVoiceStatus('Listening...');
+  };
+
+  recognition.onresult = (event) => {
+    const result = event.results[event.results.length - 1];
+    if (!result.isFinal) {
+      // Live preview in the input box so it's visible it's actually hearing
+      // him -- doesn't touch send, purely feedback.
+      document.getElementById('messageInput').value = result[0].transcript;
+      return;
+    }
+    const transcript = result[0].transcript.trim();
+    document.getElementById('messageInput').value = '';
+    if (transcript) handleVoiceUtterance(transcript);
+  };
+
+  recognition.onerror = (e) => {
+    // 'no-speech' fires constantly on mobile after a few seconds of silence
+    // during a drive -- expected, not a real error; onend below restarts it.
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      voiceModeOn = false;
+      localStorage.setItem('voiceMode', '0');
+      updateVoiceBtn();
+      alert('Microphone access is blocked for this site -- enable it in your browser settings to use voice mode.');
+    } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+      console.warn('speech recognition error:', e.error);
+    }
+  };
+
+  recognition.onend = () => {
+    recognitionActive = false;
+    updateVoiceBtn();
+    // Browsers cap how long one continuous session runs (varies by vendor)
+    // -- restart automatically as long as voice mode is still on and we're
+    // not deliberately paused for TTS/sending.
+    if (voiceModeOn && !suppressRecognition) {
+      setTimeout(startRecognition, 300);
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (e) {
+    console.warn('recognition.start() failed:', e);
+    setTimeout(() => { if (voiceModeOn) startRecognition(); }, 500);
+  }
+}
+
+function stopRecognition() {
+  recognitionActive = false;
+  if (recognition) {
+    try { recognition.onend = null; recognition.stop(); } catch(e) {}
+  }
+  updateVoiceBtn();
+}
+
+// Stops listening, runs fn(resume), and only resumes listening once fn calls
+// resume() -- used around both sending a message and speaking a reply, so
+// the mic never picks up the phone's own TTS output as a new utterance.
+function pauseRecognitionFor(fn) {
+  suppressRecognition = true;
+  if (recognition) { try { recognition.onend = null; recognition.stop(); } catch(e) {} }
+  recognitionActive = false;
+  updateVoiceBtn();
+  fn(() => {
+    suppressRecognition = false;
+    if (voiceModeOn) startRecognition();
+  });
+}
+
+const YES_WORDS = ['yes', 'yeah', 'yep', 'yup', 'correct', 'confirm', 'affirmative'];
+const NO_WORDS = ['no', 'nope', 'nah', 'negative', 'cancel'];
+
+function handleVoiceUtterance(transcript) {
+  const normalized = transcript.toLowerCase().replace(/[.!?]+$/, '').trim();
+  // A pending confirmation (Yes/No prompt) takes voice priority over normal
+  // send -- this is what makes approvals actually usable while driving,
+  // the whole point of the "chat should mirror what's happening" ask.
+  if (pendingConfirmId && document.getElementById(pendingConfirmId)) {
+    if (YES_WORDS.includes(normalized)) { answerConfirm(pendingConfirmId, true); return; }
+    if (NO_WORDS.includes(normalized)) { answerConfirm(pendingConfirmId, false); return; }
+  }
+  pauseRecognitionFor((resume) => {
+    sendText(transcript);
+    resume();
+  });
+}
+
+function speakReply(text) {
+  if (!voiceModeOn || !('speechSynthesis' in window)) return;
+  const plain = text
+    .replace(/```[\s\S]*?```/g, ' code block, see chat. ')
+    .replace(/[`*_#>]/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .trim();
+  if (!plain) return;
+
+  pauseRecognitionFor((resume) => {
+    const utter = new SpeechSynthesisUtterance(plain);
+    utter.lang = 'en-AU';
+    utter.rate = 1.0;
+    utter.onend = resume;
+    utter.onerror = resume;
+    setVoiceStatus('Speaking...');
+    speechSynthesis.cancel(); // don't queue on top of a previous reply
+    speechSynthesis.speak(utter);
+  });
+}
+
+// ============================================================
 // WEBSOCKET
 // ============================================================
 
@@ -564,6 +756,10 @@ function handleMessage(data) {
   switch (data.type) {
     case 'message':
       addMessage(data, data.sender === 'agent');
+      if (data.sender === 'agent') {
+        pendingConfirmId = data.message_type === 'confirmation' ? `confirm-${confirmCounter}` : null;
+        speakReply(data.content);
+      }
       break;
     case 'typing':
       if (data.sender === 'agent') {
@@ -682,6 +878,7 @@ function addMessage(msg, isIncoming, prepend = false) {
 function answerConfirm(confirmId, isYes) {
   const actions = document.getElementById(confirmId);
   if (!actions) return;
+  if (pendingConfirmId === confirmId) pendingConfirmId = null;
   actions.querySelectorAll('button').forEach(b => b.disabled = true);
   actions.outerHTML = `<div class="confirm-answered">You replied: ${isYes ? 'Yes' : 'No'}</div>`;
   sendText(isYes ? 'Yes' : 'No');
@@ -830,7 +1027,10 @@ document.addEventListener('DOMContentLoaded', init);
 // own -- without this, reopening the app leaves you wherever the scroll
 // position happened to be left last time.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) scrollToBottom();
+  if (!document.hidden) {
+    scrollToBottom();
+    if (voiceModeOn && !recognitionActive && !suppressRecognition) startRecognition();
+  }
 });
 window.addEventListener('pageshow', () => scrollToBottom());
 </script>

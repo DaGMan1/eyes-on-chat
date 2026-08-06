@@ -567,6 +567,16 @@ const DUPLICATE_WINDOW_MS = 4000; // guards against a stray repeat if a
                                    // session restart ever re-delivers the
                                    // same final result anyway
 
+// Android sometimes throws a transient 'not-allowed' when resuming
+// recognition after the screen locks/app backgrounds mid-drive, even
+// though mic permission is still actually granted -- it's a lost
+// "user activation" window, not a real permission revocation. Retrying a
+// few times with backoff recovers most of these without making Garry
+// dig back into the mic button every time. Only after retries are
+// exhausted do we actually give up and flip voice mode off.
+let notAllowedRetries = 0;
+const MAX_NOT_ALLOWED_RETRIES = 4;
+
 function voiceSupported() {
   return !!SpeechRecognitionImpl && 'speechSynthesis' in window;
 }
@@ -668,6 +678,7 @@ function startRecognition() {
 
   recognition.onstart = () => {
     recognitionActive = true;
+    notAllowedRetries = 0; // a clean start means the activation window is back
     updateVoiceBtn();
     setVoiceStatus('Listening...');
   };
@@ -689,10 +700,21 @@ function startRecognition() {
     // 'no-speech' fires whenever a session times out with nothing said --
     // expected between utterances, not a real error; onend below restarts.
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      if (notAllowedRetries < MAX_NOT_ALLOWED_RETRIES) {
+        notAllowedRetries++;
+        setVoiceStatus('Reconnecting mic...');
+        setTimeout(() => { if (voiceModeOn) startRecognition(); }, 1000 * notAllowedRetries);
+        return;
+      }
+      // Retries exhausted -- this is a real, persistent block, not a
+      // transient one. No blocking alert() (useless mid-drive, and it
+      // steals focus); leave a status line + still-lit mic button so
+      // getting back in is one tap, not a full re-discovery of the toggle.
       voiceModeOn = false;
       localStorage.setItem('voiceMode', '0');
       updateVoiceBtn();
-      alert('Microphone access is blocked for this site -- enable it in your browser settings to use voice mode.');
+      document.getElementById('connectionStatus').innerHTML =
+        '<span class="dot offline"></span> Mic blocked -- tap 🎤 to retry';
     } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
       console.warn('speech recognition error:', e.error);
     }

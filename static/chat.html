@@ -581,7 +581,14 @@ const MAX_NOT_ALLOWED_RETRIES = 4;
 // handleVoiceUtterance/flushVoiceBuffer below.
 let voiceBuffer = [];
 let voiceFlushTimer = null;
-const VOICE_FLUSH_DELAY_MS = 2200;
+// 2200ms originally -- too short for a genuine "thinking about what to say
+// next" pause while driving, not just a breath between clauses. Garry hit
+// this directly: a real thinking pause got treated as "done talking" and
+// sent a half-formed sentence early. Raised to give real thinking room;
+// confirmation Yes/No answers are unaffected (handleVoiceUtterance returns
+// before touching the buffer for those), so this only adds latency to
+// normal dictated messages, not approvals.
+const VOICE_FLUSH_DELAY_MS = 4500;
 
 function voiceSupported() {
   return !!SpeechRecognitionImpl && 'speechSynthesis' in window;

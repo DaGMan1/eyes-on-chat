@@ -577,6 +577,12 @@ const DUPLICATE_WINDOW_MS = 4000; // guards against a stray repeat if a
 let notAllowedRetries = 0;
 const MAX_NOT_ALLOWED_RETRIES = 4;
 
+// Merges chained-utterance chunks that belong to one sentence -- see
+// handleVoiceUtterance/flushVoiceBuffer below.
+let voiceBuffer = [];
+let voiceFlushTimer = null;
+const VOICE_FLUSH_DELAY_MS = 2200;
+
 function voiceSupported() {
   return !!SpeechRecognitionImpl && 'speechSynthesis' in window;
 }
@@ -650,6 +656,7 @@ function toggleVoiceMode() {
     startRecognition();
   } else {
     stopRecognition();
+    flushVoiceBuffer(); // don't strand whatever was said right before stopping
     speechSynthesis.cancel();
     document.getElementById('messageInput').value = '';
     showConnected(); // restore the normal "Online" status text
@@ -785,11 +792,27 @@ function handleVoiceUtterance(transcript) {
     if (YES_WORDS.includes(normalized) || YES_WORDS.includes(firstWord)) { answerConfirm(pendingConfirmId, true); return; }
     if (NO_WORDS.includes(normalized) || NO_WORDS.includes(firstWord)) { answerConfirm(pendingConfirmId, false); return; }
   }
-  // No mic pause needed here -- sending doesn't touch the speaker, so
-  // recognition can keep listening straight through into the next thing
-  // said, which is what makes this feel like a conversation rather than
-  // stop-start turns.
-  sendText(transcript);
+  // Android's own pause detection (what ends each chained single-utterance
+  // session) is eager -- a couple seconds of silence, sometimes less, is
+  // enough to finalize mid-sentence. Sending immediately on every chunk
+  // means any natural pause (thinking, breathing, a red light) chops the
+  // sentence into fragments. So instead: hold each chunk and merge it with
+  // whatever arrives next, only actually sending once nothing new has
+  // landed for VOICE_FLUSH_DELAY_MS -- i.e. he's actually done, not just
+  // pausing. No mic pause needed here -- sending doesn't touch the
+  // speaker, so recognition keeps listening straight through.
+  voiceBuffer.push(transcript);
+  clearTimeout(voiceFlushTimer);
+  voiceFlushTimer = setTimeout(flushVoiceBuffer, VOICE_FLUSH_DELAY_MS);
+}
+
+function flushVoiceBuffer() {
+  clearTimeout(voiceFlushTimer);
+  voiceFlushTimer = null;
+  if (!voiceBuffer.length) return;
+  const combined = voiceBuffer.join(' ');
+  voiceBuffer = [];
+  sendText(combined);
 }
 
 function speakReply(text) {
